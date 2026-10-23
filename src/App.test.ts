@@ -59,6 +59,55 @@ function renderWithApi(api: DesktopApi) {
 }
 
 describe('App', () => {
+  it.each([false, true])('keeps the system proxy checkbox unchecked after an enable failure (conflict=%s)', async (conflict) => {
+    const api = windowsApi()
+    vi.mocked(api.getProxyStatus).mockResolvedValue({ ...status, state: 'running' })
+    api.enableSystemProxy = vi.fn().mockRejectedValue({ code: 'SYSTEM_PROXY_ERROR', message: '系统代理启用失败' })
+    vi.mocked(api.getSystemProxyStatus)
+      .mockResolvedValueOnce({ managed: false, recoveryPending: false, conflict: false })
+      .mockResolvedValue({ managed: false, recoveryPending: conflict, conflict })
+    renderWithApi(api)
+    await screen.findByRole('button', { name: '停止代理' })
+    await fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    const checkbox = await screen.findByRole('checkbox', { name: '系统代理' })
+    expect(checkbox).not.toBeChecked()
+    await fireEvent.click(checkbox)
+    expect(await screen.findByText('系统代理启用失败')).toBeVisible()
+    await waitFor(() => expect(api.getSystemProxyStatus).toHaveBeenCalledTimes(2))
+    expect(checkbox).not.toBeChecked()
+    if (conflict) {
+      expect(checkbox).toBeDisabled()
+      expect(screen.getByRole('button', { name: '重试恢复系统代理' })).toBeVisible()
+    } else {
+      expect(checkbox).toBeEnabled()
+    }
+  })
+
+  it('keeps core state and live subscriptions when the system proxy status query fails', async () => {
+    const api = windowsApi()
+    const handlers = new Map<string, (payload: unknown) => void>()
+    vi.mocked(api.getProxyStatus).mockResolvedValue({ ...status, state: 'running', port: 8888 })
+    vi.mocked(api.listTraffic).mockResolvedValue([row])
+    vi.mocked(api.getSystemProxyStatus).mockRejectedValue({ code: 'SYSTEM_PROXY_RESTORE_ERROR', message: '系统代理恢复记录损坏' })
+    api.listen = vi.fn(async (event: string, handler: (payload: unknown) => void) => {
+      handlers.set(event, handler)
+      return () => undefined
+    })
+    renderWithApi(api)
+    expect(await screen.findByText('系统代理恢复记录损坏')).toBeVisible()
+    expect(await screen.findByRole('button', { name: '停止代理' })).toBeVisible()
+    expect(await screen.findByRole('button', { name: '展开 api.example.com 分组' })).toBeVisible()
+    expect(screen.queryByRole('dialog', { name: /使用声明/ })).not.toBeInTheDocument()
+    await waitFor(() => expect(handlers.has('diagnostic-log')).toBe(true))
+    handlers.get('proxy-status-changed')?.(status)
+    expect(await screen.findByRole('button', { name: '启动代理' })).toBeVisible()
+    await fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    expect(await screen.findByRole('spinbutton', { name: '代理端口' })).toHaveValue(8888)
+    await fireEvent.click(screen.getByRole('tab', { name: '证书配置' }))
+    expect(screen.getByRole('heading', { name: '本机 Windows' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '安装信任' })).toBeEnabled()
+  })
+
   it('loads Windows trust state and changes it only through explicit trust buttons', async () => {
     const api = windowsApi()
     renderWithApi(api)

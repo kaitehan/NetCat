@@ -68,7 +68,10 @@ export function useNetCat() {
         api.listTraffic(),
         api.listMockRules(),
         api.getCaStatus(),
-        api.getSystemProxyStatus(),
+        api.getSystemProxyStatus().catch((cause) => {
+          error.value = normalizeDesktopError(cause)
+          return { managed: false, recoveryPending: false, conflict: false }
+        }),
         api.hasAcceptedDisclaimer(),
         api.getPlatformInfo(),
         api.getCertificateTrustStatus()

@@ -61,6 +61,14 @@ function updatePort(event: Event) {
     emit('updatePort', value)
   }
 }
+
+function updateSystemProxy(event: Event) {
+  const input = event.target as HTMLInputElement
+  const requested = input.checked
+  // Native clicks change the DOM before the parent confirms the OS operation.
+  input.checked = systemProxyChecked.value
+  emit('updateSystemProxy', requested)
+}
 </script>
 
 <template>
@@ -171,7 +179,7 @@ function updatePort(event: Event) {
               type="checkbox"
               :checked="systemProxyChecked"
               :disabled="busy || proxyRecoveryNeeded"
-              @change="emit('updateSystemProxy', ($event.target as HTMLInputElement).checked)"
+              @change="updateSystemProxy"
             />
             <span aria-hidden="true" />
           </label>
