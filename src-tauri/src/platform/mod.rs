@@ -7,6 +7,9 @@ use crate::{error::AppError, storage::Store, system_proxy::SystemProxyManager};
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+#[cfg(any(target_os = "windows", test))]
+pub mod windows;
+
 pub trait SecretStore: Send + Sync {
     fn save_private_key(&self, value: &str) -> Result<(), AppError>;
     fn load_private_key(&self) -> Result<Option<String>, AppError>;
