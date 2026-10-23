@@ -4,7 +4,7 @@ use chrono::Utc;
 use tauri::{Emitter, Manager, State};
 
 use crate::{
-    ca::{CaManager, KeychainSecretStore, SecretStore},
+    ca::CaManager,
     diagnostics::build_diagnostic_archive,
     error::AppError,
     export::{build_exchange_copy as create_exchange_copy, build_har},
@@ -14,6 +14,7 @@ use crate::{
         MockRuleTestResult, ProxyConfig, ProxyStatus, ReplayDraft, ReplayMode, ReplayRequest,
         ReplayResult, TrafficCopyKind, TrafficDetail, TrafficFilter, TrafficSummary,
     },
+    platform::PlatformServices,
     proxy::{ProxyEventSink, ProxyService},
     rules::RuntimeMockRules,
     storage::Store,
@@ -25,7 +26,7 @@ const DISCLAIMER_KEY: &str = "disclaimer_accepted";
 struct AppState {
     store: Arc<Store>,
     proxy: Arc<ProxyService>,
-    ca: CaManager<KeychainSecretStore>,
+    ca: CaManager,
     system_proxy: SystemProxyManager,
 }
 
@@ -67,7 +68,7 @@ fn emit_diagnostic(app: &tauri::AppHandle, log: DiagnosticLog) {
     let _ = app.emit("diagnostic-log", log);
 }
 
-fn initialize_migrated_ca<S: SecretStore>(migrated: bool, ca: &CaManager<S>) -> bool {
+fn initialize_migrated_ca(migrated: bool, ca: &CaManager) -> bool {
     if !migrated {
         return false;
     }
@@ -488,7 +489,9 @@ pub fn run() {
                 )
                 .map_err(|error| error.to_string())?,
             );
-            let system_proxy = SystemProxyManager::new(Arc::clone(&store));
+            let platform = PlatformServices::current(Arc::clone(&store), &data_directory)
+                .map_err(|error| error.to_string())?;
+            let system_proxy = platform.system_proxy;
             if let Err(error) = system_proxy.restore() {
                 let _ = app.emit("storage-warning", &error);
             }
@@ -497,7 +500,7 @@ pub fn run() {
                 Arc::clone(&store),
                 event_sink,
             ));
-            let ca = CaManager::new(data_directory.join("certificates"), KeychainSecretStore);
+            let ca = CaManager::new(data_directory.join("certificates"), platform.secrets);
             initialize_migrated_ca(migrated_from_netcapture, &ca);
             app.manage(AppState {
                 store,

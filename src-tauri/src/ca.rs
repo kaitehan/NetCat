@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf};
+use std::{fs, path::PathBuf, sync::Arc};
 
 use hudsucker::rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
@@ -8,43 +8,22 @@ use sha2::{Digest, Sha256};
 
 use crate::{error::AppError, models::CaStatus};
 
+pub use crate::platform::SecretStore;
+
 pub const KEYCHAIN_SERVICE: &str = "com.kaitehan.netcat";
 pub const CA_COMMON_NAME: &str = "NetCat Local Root CA";
 pub const CA_ORGANIZATION_NAME: &str = "NetCat Local Development";
-const KEYCHAIN_USER: &str = "root-ca-private-key";
-
-pub trait SecretStore: Clone + Send + Sync + 'static {
-    fn save_private_key(&self, value: &str) -> Result<(), AppError>;
-    fn load_private_key(&self) -> Result<Option<String>, AppError>;
-}
-
-#[derive(Clone, Default)]
-pub struct KeychainSecretStore;
-
-impl SecretStore for KeychainSecretStore {
-    fn save_private_key(&self, value: &str) -> Result<(), AppError> {
-        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(keychain_error)?;
-        entry.set_password(value).map_err(keychain_error)
-    }
-
-    fn load_private_key(&self) -> Result<Option<String>, AppError> {
-        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(keychain_error)?;
-        match entry.get_password() {
-            Ok(value) => Ok(Some(value)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(keychain_error(error)),
-        }
-    }
-}
-
-pub struct CaManager<S: SecretStore> {
+pub struct CaManager {
     directory: PathBuf,
-    secrets: S,
+    secrets: Arc<dyn SecretStore>,
 }
 
-impl<S: SecretStore> CaManager<S> {
-    pub fn new(directory: PathBuf, secrets: S) -> Self {
-        Self { directory, secrets }
+impl CaManager {
+    pub fn new<S: SecretStore + 'static>(directory: PathBuf, secrets: S) -> Self {
+        Self {
+            directory,
+            secrets: Arc::new(secrets),
+        }
     }
 
     pub fn certificate_path(&self) -> PathBuf {
@@ -117,12 +96,6 @@ fn fingerprint(certificate_pem: &str) -> String {
         .join(":")
 }
 
-fn keychain_error(error: keyring::Error) -> AppError {
-    AppError::new("KEYCHAIN_ERROR", "无法访问 macOS 钥匙串")
-        .with_detail(error.to_string())
-        .with_action("请允许 NetCat 访问钥匙串后重试")
-}
-
 fn certificate_error(error: impl std::fmt::Display) -> AppError {
     AppError::new("CA_ERROR", "无法生成或加载本地 CA").with_detail(error.to_string())
 }
@@ -131,4 +104,46 @@ fn file_error(error: std::io::Error) -> AppError {
     AppError::new("FILE_ERROR", "无法读写 CA 证书文件")
         .with_detail(error.to_string())
         .with_action("请检查应用数据目录权限")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    // Deliberately not Clone: private-key storage must support trait objects.
+    #[derive(Default)]
+    struct MemorySecrets(Mutex<Option<String>>);
+
+    impl SecretStore for MemorySecrets {
+        fn save_private_key(&self, value: &str) -> Result<(), AppError> {
+            *self.0.lock().unwrap() = Some(value.to_owned());
+            Ok(())
+        }
+
+        fn load_private_key(&self) -> Result<Option<String>, AppError> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+    }
+
+    #[test]
+    fn ca_uses_object_safe_secret_store_without_writing_private_key_to_disk() {
+        let directory = tempfile::tempdir().unwrap();
+        let secrets: Arc<dyn SecretStore> = Arc::new(MemorySecrets::default());
+        let manager = CaManager::new(directory.path().to_path_buf(), secrets.clone());
+
+        let status = manager.generate().unwrap();
+        let public_certificate = fs::read_to_string(manager.certificate_path()).unwrap();
+
+        assert!(status.generated);
+        assert!(public_certificate.contains("BEGIN CERTIFICATE"));
+        assert!(!public_certificate.contains("PRIVATE KEY"));
+        assert!(secrets
+            .load_private_key()
+            .unwrap()
+            .unwrap()
+            .contains("PRIVATE KEY"));
+        assert!(manager.load_issuer().is_ok());
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
 }
