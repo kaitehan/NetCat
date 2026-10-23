@@ -63,7 +63,7 @@ impl CaManager {
             });
         }
         let certificate_pem = fs::read_to_string(&path).map_err(file_error)?;
-        let fingerprint = fingerprint(&certificate_pem);
+        let fingerprint = fingerprint(&certificate_pem)?;
         Ok(CaStatus {
             generated: true,
             certificate_path: Some(path.to_string_lossy().into_owned()),
@@ -87,13 +87,14 @@ impl CaManager {
     }
 }
 
-fn fingerprint(certificate_pem: &str) -> String {
-    let digest = Sha256::digest(certificate_pem.as_bytes());
-    digest
+fn fingerprint(certificate_pem: &str) -> Result<String, AppError> {
+    let der = crate::platform::certificate_der(certificate_pem.as_bytes())?;
+    let digest = Sha256::digest(&der);
+    Ok(digest
         .iter()
         .map(|byte| format!("{byte:02X}"))
         .collect::<Vec<_>>()
-        .join(":")
+        .join(":"))
 }
 
 fn certificate_error(error: impl std::fmt::Display) -> AppError {
@@ -124,6 +125,18 @@ mod tests {
         fn load_private_key(&self) -> Result<Option<String>, AppError> {
             Ok(self.0.lock().unwrap().clone())
         }
+    }
+
+    #[test]
+    fn fingerprint_uses_der_and_is_independent_of_pem_line_endings() {
+        let pem = "-----BEGIN CERTIFICATE-----\nQQ==\n-----END CERTIFICATE-----\n";
+        let expected = "55:9A:EA:D0:82:64:D5:79:5D:39:09:71:8C:DD:05:AB:D4:95:72:E8:4F:E5:55:90:EE:F3:1A:88:A0:8F:DF:FD";
+        assert_eq!(fingerprint(pem).unwrap(), expected);
+        assert_eq!(fingerprint(&pem.replace('\n', "\r\n")).unwrap(), expected);
+        assert_eq!(
+            fingerprint("invalid").unwrap_err().code,
+            "CA_CERTIFICATE_INVALID"
+        );
     }
 
     #[test]
