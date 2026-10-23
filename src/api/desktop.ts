@@ -6,15 +6,18 @@ import { save } from '@tauri-apps/plugin-dialog'
 import type {
   AppError,
   CaStatus,
+  CertificateTrustState,
   DiagnosticLog,
   MockRule,
   MockRuleTestResult,
+  PlatformInfo,
   ProxyConfig,
   ProxyStatus,
   ReplayMode,
   ReplayDraft,
   ReplayRequest,
   ReplayResult,
+  SystemProxyStatus,
   TrafficCopyKind,
   TrafficDetail,
   TrafficSummary
@@ -28,6 +31,11 @@ export type DesktopEvent =
   | 'diagnostic-log'
 
 export interface DesktopApi {
+  getPlatformInfo(): Promise<PlatformInfo>
+  getSystemProxyStatus(): Promise<SystemProxyStatus>
+  getCertificateTrustStatus(): Promise<CertificateTrustState>
+  installCaTrust(): Promise<CertificateTrustState>
+  removeCaTrust(): Promise<CertificateTrustState>
   getProxyStatus(): Promise<ProxyStatus>
   startProxy(config: ProxyConfig): Promise<ProxyStatus>
   stopProxy(): Promise<ProxyStatus>
@@ -149,6 +157,21 @@ let browserStatus: ProxyStatus = {
 }
 
 const browserApi: DesktopApi = {
+  async getPlatformInfo() {
+    return { os: 'macos', version: '浏览器预览', arch: 'unknown', certificateTrustSupported: false }
+  },
+  async getSystemProxyStatus() {
+    return { managed: false, recoveryPending: false, conflict: false }
+  },
+  async getCertificateTrustStatus() {
+    return 'unsupported'
+  },
+  async installCaTrust() {
+    return 'unsupported'
+  },
+  async removeCaTrust() {
+    return 'unsupported'
+  },
   async getProxyStatus() {
     return browserStatus
   },
@@ -336,6 +359,11 @@ const browserApi: DesktopApi = {
 }
 
 const tauriApi: DesktopApi = {
+  getPlatformInfo: () => invoke('get_platform_info'),
+  getSystemProxyStatus: () => invoke('get_system_proxy_status'),
+  getCertificateTrustStatus: () => invoke('get_certificate_trust_status'),
+  installCaTrust: () => invoke('install_ca_trust'),
+  removeCaTrust: () => invoke('remove_ca_trust'),
   getProxyStatus: () => invoke('get_proxy_status'),
   startProxy: (config) => invoke('start_proxy', { config }),
   stopProxy: () => invoke('stop_proxy'),

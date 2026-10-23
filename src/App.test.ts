@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
-import { desktopApiKey, type DesktopApi } from './api/desktop'
+import { desktopApi, desktopApiKey, type DesktopApi } from './api/desktop'
 import type { MockRule, ProxyStatus, TrafficDetail, TrafficSummary } from './shared/types'
 
 const status: ProxyStatus = {
@@ -27,11 +27,103 @@ const row: TrafficSummary = {
   error: null
 }
 
+function platformApi() {
+  return {
+    getPlatformInfo: vi.fn().mockResolvedValue({ os: 'macos', version: '15', arch: 'arm64', certificateTrustSupported: false }),
+    getSystemProxyStatus: vi.fn().mockResolvedValue({ managed: false, recoveryPending: false, conflict: false }),
+    getCertificateTrustStatus: vi.fn().mockResolvedValue('unsupported'),
+    installCaTrust: vi.fn(),
+    removeCaTrust: vi.fn()
+  }
+}
+
+function windowsApi(): DesktopApi {
+  return {
+    ...desktopApi,
+    getPlatformInfo: vi.fn().mockResolvedValue({ os: 'windows', version: '10.0.19045', arch: 'x86_64', certificateTrustSupported: true }),
+    getProxyStatus: vi.fn().mockResolvedValue(status),
+    getCaStatus: vi.fn().mockResolvedValue({ generated: true, certificatePath: 'C:\\NetCat\\ca.crt', fingerprint: 'AA' }),
+    getSystemProxyStatus: vi.fn().mockResolvedValue({ managed: false, recoveryPending: false, conflict: false }),
+    getCertificateTrustStatus: vi.fn().mockResolvedValue('notTrusted'),
+    installCaTrust: vi.fn().mockResolvedValue('trusted'),
+    removeCaTrust: vi.fn().mockResolvedValue('notTrusted'),
+    listTraffic: vi.fn().mockResolvedValue([]),
+    listMockRules: vi.fn().mockResolvedValue([]),
+    hasAcceptedDisclaimer: vi.fn().mockResolvedValue(true),
+    listen: vi.fn().mockResolvedValue(() => undefined)
+  }
+}
+
+function renderWithApi(api: DesktopApi) {
+  return render(App, { global: { provide: { [desktopApiKey as symbol]: api } } })
+}
+
 describe('App', () => {
+  it('loads Windows trust state and changes it only through explicit trust buttons', async () => {
+    const api = windowsApi()
+    renderWithApi(api)
+    await waitFor(() => expect(api.getCertificateTrustStatus).toHaveBeenCalledOnce())
+    expect(api.installCaTrust).not.toHaveBeenCalled()
+    expect(api.removeCaTrust).not.toHaveBeenCalled()
+    await fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    await fireEvent.click(await screen.findByRole('tab', { name: '证书配置' }))
+    await fireEvent.click(screen.getByRole('button', { name: '安装信任' }))
+    expect(await screen.findByText('当前 CA 已信任')).toBeVisible()
+    await fireEvent.click(screen.getByRole('button', { name: '移除信任' }))
+    expect(await screen.findByRole('button', { name: '安装信任' })).toBeEnabled()
+    expect(api.installCaTrust).toHaveBeenCalledOnce()
+    expect(api.removeCaTrust).toHaveBeenCalledOnce()
+  })
+
+  it('rechecks trust after generating a CA without automatically installing trust', async () => {
+    const api = windowsApi()
+    vi.mocked(api.getCaStatus).mockResolvedValue({ generated: false, certificatePath: null, fingerprint: null })
+    vi.mocked(api.getCertificateTrustStatus).mockResolvedValueOnce('notGenerated').mockResolvedValue('notTrusted')
+    api.generateCa = vi.fn().mockResolvedValue({ generated: true, certificatePath: 'C:\\NetCat\\ca.crt', fingerprint: 'AA' })
+    renderWithApi(api)
+    await fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    await fireEvent.click(await screen.findByRole('tab', { name: '证书配置' }))
+    await fireEvent.click(await screen.findByRole('button', { name: '生成证书' }))
+    expect(await screen.findByRole('button', { name: '安装信任' })).toBeEnabled()
+    expect(api.installCaTrust).not.toHaveBeenCalled()
+  })
+
+  it('shows pending proxy recovery and refreshes ownership after recovery', async () => {
+    const api = windowsApi()
+    vi.mocked(api.getSystemProxyStatus)
+      .mockResolvedValueOnce({ managed: false, recoveryPending: true, conflict: true })
+      .mockResolvedValue({ managed: false, recoveryPending: false, conflict: false })
+    api.restoreSystemProxy = vi.fn().mockResolvedValue(undefined)
+    renderWithApi(api)
+    await waitFor(() => expect(api.getSystemProxyStatus).toHaveBeenCalledOnce())
+    await fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    const recovery = await screen.findByRole('button', { name: '重试恢复系统代理' })
+    expect(screen.getByRole('checkbox', { name: '系统代理' })).not.toBeChecked()
+    await fireEvent.click(recovery)
+    await waitFor(() => expect(screen.queryByRole('button', { name: '重试恢复系统代理' })).not.toBeInTheDocument())
+    expect(api.restoreSystemProxy).toHaveBeenCalledOnce()
+  })
+
+  it('refreshes proxy conflicts after a failed enable instead of showing the preference as enabled', async () => {
+    const api = windowsApi()
+    api.startProxy = vi.fn().mockResolvedValue({ ...status, state: 'running' })
+    api.enableSystemProxy = vi.fn().mockRejectedValue({ code: 'SYSTEM_PROXY_CONFLICT', message: '系统代理冲突' })
+    vi.mocked(api.getSystemProxyStatus)
+      .mockResolvedValueOnce({ managed: false, recoveryPending: false, conflict: false })
+      .mockResolvedValue({ managed: false, recoveryPending: true, conflict: true })
+    renderWithApi(api)
+    await waitFor(() => expect(api.getSystemProxyStatus).toHaveBeenCalledOnce())
+    await fireEvent.click(screen.getByRole('button', { name: '启动代理' }))
+    await fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    expect(await screen.findByRole('button', { name: '重试恢复系统代理' })).toBeVisible()
+    expect(screen.getByRole('checkbox', { name: '系统代理' })).not.toBeChecked()
+  })
+
   it('starts the proxy with defaults and automatically enables the system proxy', async () => {
     const startProxy = vi.fn().mockResolvedValue({ ...status, state: 'running' })
     const enableSystemProxy = vi.fn()
     const api = {
+      ...platformApi(),
       getProxyStatus: vi.fn().mockResolvedValue(status),
       startProxy,
       stopProxy: vi.fn(),
@@ -84,6 +176,7 @@ describe('App', () => {
 
   it('moves proxy and certificate configuration into the settings page', async () => {
     const api = {
+      ...platformApi(),
       getProxyStatus: vi.fn().mockResolvedValue(status),
       startProxy: vi.fn(),
       stopProxy: vi.fn(),
@@ -164,6 +257,7 @@ describe('App', () => {
       createdAt: '2026-10-23T09:00:00Z'
     }
     const api = {
+      ...platformApi(),
       getProxyStatus: vi.fn().mockResolvedValue(status),
       startProxy: vi.fn(),
       stopProxy: vi.fn(),
@@ -230,6 +324,7 @@ describe('App', () => {
     const openDevtools = vi.fn().mockResolvedValue(undefined)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const api = {
+      ...platformApi(),
       getProxyStatus: vi.fn().mockResolvedValue(status),
       startProxy: vi.fn(),
       stopProxy: vi.fn(),

@@ -1,5 +1,26 @@
 export type ProxyState = 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
 
+export interface PlatformInfo {
+  os: 'windows' | 'macos'
+  version: string
+  arch: string
+  certificateTrustSupported: boolean
+}
+
+export interface SystemProxyStatus {
+  managed: boolean
+  recoveryPending: boolean
+  conflict: boolean
+}
+
+export type CertificateTrustState =
+  | 'unsupported'
+  | 'notGenerated'
+  | 'notTrusted'
+  | 'trusted'
+  | 'mismatch'
+  | 'unavailable'
+
 export interface ProxyConfig {
   port: number
   allowLan: boolean

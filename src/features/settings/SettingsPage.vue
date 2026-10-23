@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { Bug, Download, Info, Laptop, Pause, Radio, Router, Settings2, ShieldCheck } from '@lucide/vue'
-import { shallowRef } from 'vue'
+import { computed, shallowRef } from 'vue'
 import { APP_BRAND } from '../../shared/brand'
-import type { CaStatus, ProxyStatus } from '../../shared/types'
+import type { CaStatus, CertificateTrustState, PlatformInfo, ProxyStatus, SystemProxyStatus } from '../../shared/types'
 import CertificatePanel from '../certificate/CertificatePanel.vue'
 
 const {
+  platform,
+  trustState,
+  systemProxyStatus,
   proxyStatus,
   port,
   allowLan,
@@ -15,6 +18,9 @@ const {
   caStatus,
   busy
 } = defineProps<{
+  platform: PlatformInfo | null
+  trustState: CertificateTrustState
+  systemProxyStatus: SystemProxyStatus
   proxyStatus: ProxyStatus
   port: number
   allowLan: boolean
@@ -30,13 +36,24 @@ const emit = defineEmits<{
   updateAllowLan: [value: boolean]
   updateCapture: [value: boolean]
   updateSystemProxy: [value: boolean]
+  restoreSystemProxy: []
   generateCa: []
   exportCa: []
+  trustCa: []
+  removeCaTrust: []
   openDiagnostics: []
   exportDiagnostics: []
 }>()
 
 const activeTab = shallowRef<'proxy' | 'certificate' | 'system'>('proxy')
+const proxyRecoveryNeeded = computed(() => systemProxyStatus.conflict ||
+  (systemProxyStatus.recoveryPending && (!systemProxyStatus.managed || proxyStatus.state !== 'running')))
+const systemProxyChecked = computed(() => {
+  if (proxyRecoveryNeeded.value) {
+    return false
+  }
+  return proxyStatus.state === 'running' ? systemProxyEnabled && systemProxyStatus.managed : systemProxyPreferred
+})
 
 function updatePort(event: Event) {
   const value = Number((event.target as HTMLInputElement).value)
@@ -142,7 +159,8 @@ function updatePort(event: Event) {
         <div class="setting-row">
           <div>
             <label for="system-proxy">系统代理</label>
-            <p v-if="proxyStatus.state === 'running'">
+            <p v-if="proxyRecoveryNeeded">系统代理需要恢复，请查看下方提示。</p>
+            <p v-else-if="proxyStatus.state === 'running'">
               {{ systemProxyEnabled ? '本机 HTTP/HTTPS 流量已接入。' : '当前未修改本机系统代理。' }}
             </p>
             <p v-else>开启后将在代理启动时自动接入，停止时恢复原配置。</p>
@@ -151,12 +169,23 @@ function updatePort(event: Event) {
             <input
               id="system-proxy"
               type="checkbox"
-              :checked="systemProxyPreferred"
-              :disabled="busy"
+              :checked="systemProxyChecked"
+              :disabled="busy || proxyRecoveryNeeded"
               @change="emit('updateSystemProxy', ($event.target as HTMLInputElement).checked)"
             />
             <span aria-hidden="true" />
           </label>
+        </div>
+
+        <div v-if="proxyRecoveryNeeded" class="setting-row" role="status">
+          <div>
+            <span class="setting-label">系统代理恢复</span>
+            <p v-if="systemProxyStatus.conflict">系统代理已被其他程序或用户修改，请检查系统代理设置后重试恢复。</p>
+            <p v-else>上次系统代理配置尚未恢复，请恢复原配置后继续。</p>
+          </div>
+          <button type="button" class="debug-button" :disabled="busy" @click="emit('restoreSystemProxy')">
+            {{ systemProxyStatus.conflict ? '重试恢复系统代理' : '恢复系统代理' }}
+          </button>
         </div>
 
         <div class="setting-row">
@@ -186,12 +215,16 @@ function updatePort(event: Event) {
     <div v-else-if="activeTab === 'certificate'" class="certificate-content" role="tabpanel">
       <CertificatePanel
         embedded
+        :platform="platform"
+        :trust-state="trustState"
         :ca-status="caStatus"
         :proxy-status="proxyStatus"
         :allow-lan="allowLan"
         :busy="busy"
         @generate="emit('generateCa')"
         @export="emit('exportCa')"
+        @trust="emit('trustCa')"
+        @remove-trust="emit('removeCaTrust')"
       />
     </div>
 

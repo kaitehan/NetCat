@@ -3,15 +3,18 @@ import { desktopApi, desktopApiKey, normalizeDesktopError } from '../api/desktop
 import type {
   AppError,
   CaStatus,
+  CertificateTrustState,
   DiagnosticLog,
   MockRule,
   MockRuleTestResult,
+  PlatformInfo,
   ProxyConfig,
   ProxyStatus,
   ReplayDraft,
   ReplayMode,
   ReplayRequest,
   ReplayResult,
+  SystemProxyStatus,
   TrafficCopyKind,
   TrafficDetail,
   TrafficSummary
@@ -37,7 +40,10 @@ export function useNetCat() {
   const selectedDetail = shallowRef<TrafficDetail | null>(null)
   const mockRules = shallowRef<readonly MockRule[]>([])
   const caStatus = shallowRef<CaStatus>({ generated: false, certificatePath: null, fingerprint: null })
-  const systemProxyEnabled = shallowRef(false)
+  const platform = shallowRef<PlatformInfo | null>(null)
+  const trustState = shallowRef<CertificateTrustState>('unavailable')
+  const systemProxyStatus = shallowRef<SystemProxyStatus>({ managed: false, recoveryPending: false, conflict: false })
+  const systemProxyEnabled = computed(() => systemProxyStatus.value.managed && !systemProxyStatus.value.conflict)
   const systemProxyPreferred = shallowRef(true)
   const disclaimerAccepted = shallowRef<boolean | null>(null)
   const error = shallowRef<AppError | null>(null)
@@ -57,20 +63,24 @@ export function useNetCat() {
   async function initialize() {
     busy.value = true
     try {
-      const [status, rows, rules, certificate, systemProxy, disclaimer] = await Promise.all([
+      const [status, rows, rules, certificate, systemProxy, disclaimer, platformInfo, certificateTrust] = await Promise.all([
         api.getProxyStatus(),
         api.listTraffic(),
         api.listMockRules(),
         api.getCaStatus(),
-        api.isSystemProxyEnabled(),
-        api.hasAcceptedDisclaimer()
+        api.getSystemProxyStatus(),
+        api.hasAcceptedDisclaimer(),
+        api.getPlatformInfo(),
+        api.getCertificateTrustStatus()
       ])
       proxyStatus.value = status
       port.value = status.port
       traffic.value = rows
       mockRules.value = rules
       caStatus.value = certificate
-      systemProxyEnabled.value = systemProxy
+      systemProxyStatus.value = systemProxy
+      platform.value = platformInfo
+      trustState.value = certificateTrust
       disclaimerAccepted.value = disclaimer
       unlisteners.push(await api.listen<ProxyStatus>('proxy-status-changed', (payload) => {
         proxyStatus.value = payload
@@ -97,10 +107,9 @@ export function useNetCat() {
   }
 
   async function toggleProxy() {
-    await runAction(async () => {
+    await runSystemProxyAction(async () => {
       if (isRunning.value) {
         proxyStatus.value = await api.stopProxy()
-        systemProxyEnabled.value = false
         return
       }
 
@@ -111,7 +120,6 @@ export function useNetCat() {
       })
       if (systemProxyPreferred.value) {
         await api.enableSystemProxy()
-        systemProxyEnabled.value = true
       }
     })
   }
@@ -121,14 +129,27 @@ export function useNetCat() {
     if (!isRunning.value || enabled === systemProxyEnabled.value) {
       return
     }
-    await runAction(async () => {
+    await runSystemProxyAction(async () => {
       if (enabled) {
         await api.enableSystemProxy()
       } else {
         await api.restoreSystemProxy()
       }
-      systemProxyEnabled.value = enabled
     })
+  }
+
+  async function runSystemProxyAction(action: () => Promise<void>) {
+    await runAction(async () => {
+      try {
+        await action()
+      } finally {
+        systemProxyStatus.value = await api.getSystemProxyStatus()
+      }
+    })
+  }
+
+  async function restoreSystemProxy() {
+    await runSystemProxyAction(() => api.restoreSystemProxy())
   }
 
   async function setCapture(enabled: boolean) {
@@ -281,6 +302,30 @@ export function useNetCat() {
   async function generateCa() {
     await runAction(async () => {
       caStatus.value = await api.generateCa()
+      trustState.value = await api.getCertificateTrustStatus()
+    })
+  }
+
+  function canManageCaTrust() {
+    return !busy.value && platform.value?.os === 'windows' &&
+      platform.value.certificateTrustSupported && caStatus.value.generated
+  }
+
+  async function trustCa() {
+    if (!canManageCaTrust() || trustState.value !== 'notTrusted') {
+      return
+    }
+    await runAction(async () => {
+      trustState.value = await api.installCaTrust()
+    })
+  }
+
+  async function removeCaTrust() {
+    if (!canManageCaTrust() || trustState.value !== 'trusted') {
+      return
+    }
+    await runAction(async () => {
+      trustState.value = await api.removeCaTrust()
     })
   }
 
@@ -338,6 +383,9 @@ export function useNetCat() {
     selectedDetail: readonly(selectedDetail),
     mockRules: readonly(mockRules),
     caStatus: readonly(caStatus),
+    platform: readonly(platform),
+    trustState: readonly(trustState),
+    systemProxyStatus: readonly(systemProxyStatus),
     systemProxyEnabled: readonly(systemProxyEnabled),
     systemProxyPreferred: readonly(systemProxyPreferred),
     disclaimerAccepted: readonly(disclaimerAccepted),
@@ -351,6 +399,7 @@ export function useNetCat() {
     initialize,
     toggleProxy,
     setSystemProxy,
+    restoreSystemProxy,
     setCapture,
     selectTraffic,
     getTrafficDetail,
@@ -367,6 +416,8 @@ export function useNetCat() {
     reorderMocks,
     testMocks,
     generateCa,
+    trustCa,
+    removeCaTrust,
     acceptDisclaimer,
     openDevtools,
     clearDiagnosticLogs,

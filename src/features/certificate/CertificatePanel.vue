@@ -2,11 +2,13 @@
 import { computed } from 'vue'
 import { CheckCircle2, Download, KeyRound, Smartphone, X } from '@lucide/vue'
 import QrcodeVue from 'qrcode.vue'
-import type { CaStatus, ProxyStatus } from '../../shared/types'
+import type { CaStatus, CertificateTrustState, PlatformInfo, ProxyStatus } from '../../shared/types'
 
-const { open = true, embedded = false, caStatus, proxyStatus, allowLan, busy } = defineProps<{
+const { open = true, embedded = false, platform, trustState, caStatus, proxyStatus, allowLan, busy } = defineProps<{
   open?: boolean
   embedded?: boolean
+  platform: PlatformInfo | null
+  trustState: CertificateTrustState
   caStatus: CaStatus
   proxyStatus: ProxyStatus
   allowLan: boolean
@@ -17,7 +19,28 @@ const emit = defineEmits<{
   close: []
   generate: []
   export: []
+  trust: []
+  removeTrust: []
 }>()
+
+const trustSupported = computed(() => platform?.os === 'windows' && platform.certificateTrustSupported && trustState !== 'unsupported')
+const trustMessage = computed(() => {
+  if (!trustSupported.value) {
+    return '当前环境不支持自动管理证书信任，请导出证书并手动安装。'
+  }
+  if (!caStatus.generated) {
+    return '请先生成本地 CA'
+  }
+  const messages: Record<CertificateTrustState, string> = {
+    unsupported: '当前环境不支持自动管理证书信任',
+    notGenerated: '请先生成本地 CA',
+    notTrusted: '当前 CA 尚未信任',
+    trusted: '当前 CA 已信任',
+    mismatch: '证书指纹不匹配，请检查证书存储中的旧证书后重试。',
+    unavailable: '无法读取证书信任状态，请检查当前用户证书存储后重试。'
+  }
+  return messages[trustState]
+})
 
 const certificateUrl = computed(() => {
   if (!allowLan || proxyStatus.state !== 'running' || !proxyStatus.lanIp) {
@@ -56,18 +79,19 @@ const healthUrl = computed(() => certificateUrl.value?.replace('/__netcat/ca.crt
           <div>
             <strong>{{ caStatus.generated ? '本地 CA 已就绪' : '尚未生成本地 CA' }}</strong>
             <p v-if="caStatus.fingerprint">指纹 {{ caStatus.fingerprint }}</p>
-            <p v-else>生成后私钥将安全保存在 macOS 钥匙串</p>
+            <p v-else-if="platform?.os === 'macos'">生成后私钥将安全保存在 macOS 钥匙串</p>
+            <p v-else>生成后私钥将安全保存在本机</p>
           </div>
           <button v-if="!caStatus.generated" type="button" class="primary-button" :disabled="busy" @click="emit('generate')">
             生成证书
           </button>
-          <button v-else type="button" class="secondary-button" @click="emit('export')">
+          <button v-else type="button" class="secondary-button" :disabled="busy" @click="emit('export')">
             <Download :size="14" />
             导出
           </button>
         </section>
 
-        <section class="instruction-section">
+        <section v-if="platform?.os === 'macos'" class="instruction-section">
           <h3>本机 macOS</h3>
           <ol>
             <li>导出证书并双击加入“钥匙串访问”。</li>
@@ -77,13 +101,37 @@ const healthUrl = computed(() => certificateUrl.value?.replace('/__netcat/ca.crt
           </ol>
         </section>
 
+        <section v-else class="instruction-section">
+          <h3>本机 Windows</h3>
+          <p v-if="trustSupported">仅在当前用户的“受信任的根证书颁发机构”中安装或移除当前 CA。</p>
+          <p role="status">{{ trustMessage }}</p>
+          <button
+            v-if="trustSupported && caStatus.generated && trustState === 'notTrusted'"
+            type="button"
+            class="primary-button"
+            :disabled="busy"
+            @click="emit('trust')"
+          >
+            安装信任
+          </button>
+          <button
+            v-if="trustSupported && caStatus.generated && trustState === 'trusted'"
+            type="button"
+            class="secondary-button"
+            :disabled="busy"
+            @click="emit('removeTrust')"
+          >
+            移除信任
+          </button>
+        </section>
+
         <section class="instruction-section">
           <div class="section-title">
             <Smartphone :size="16" />
             <h3>iOS / Android</h3>
           </div>
           <template v-if="certificateUrl">
-            <p>手机与 Mac 保持同一 Wi-Fi，代理填写 {{ proxyStatus.lanIp }}:{{ proxyStatus.port }}，然后访问：</p>
+            <p>手机与电脑保持同一 Wi-Fi，代理填写 {{ proxyStatus.lanIp }}:{{ proxyStatus.port }}，然后访问：</p>
             <div class="certificate-download">
               <div class="qr-code" aria-label="CA 证书下载二维码">
                 <QrcodeVue :value="certificateUrl" :size="116" level="M" render-as="svg" />

@@ -394,6 +394,9 @@ onMounted(() => void capture.initialize())
         />
         <SettingsPage
           v-else
+          :platform="capture.platform.value"
+          :trust-state="capture.trustState.value"
+          :system-proxy-status="capture.systemProxyStatus.value"
           :proxy-status="capture.proxyStatus.value"
           :port="capture.port.value"
           :allow-lan="capture.allowLan.value"
@@ -406,8 +409,11 @@ onMounted(() => void capture.initialize())
           @update-allow-lan="setAllowLan"
           @update-capture="capture.setCapture"
           @update-system-proxy="capture.setSystemProxy"
+          @restore-system-proxy="capture.restoreSystemProxy"
           @generate-ca="capture.generateCa"
           @export-ca="exportCa"
+          @trust-ca="capture.trustCa"
+          @remove-ca-trust="capture.removeCaTrust"
           @open-diagnostics="diagnosticsOpen = true"
           @export-diagnostics="exportDiagnostics"
         />
