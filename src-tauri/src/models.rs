@@ -13,7 +13,7 @@ pub struct ProxyConfig {
 impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
-            port: 8888,
+            port: 28086,
             allow_lan: false,
             capture_enabled: true,
         }
@@ -45,7 +45,7 @@ impl Default for ProxyStatus {
         Self {
             state: ProxyState::Stopped,
             bind_address: None,
-            port: 8888,
+            port: 28086,
             lan_ip: None,
             error: None,
         }

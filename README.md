@@ -6,7 +6,7 @@ NetCapture 是一款本地离线的 macOS HTTP/HTTPS 抓包与 Mock 工具。界
 
 ## MVP 能力
 
-- 本机 HTTP/1.1 与 HTTPS CONNECT 代理，默认监听 `127.0.0.1:8888`
+- 本机 HTTP/1.1 与 HTTPS CONNECT 代理，默认监听 `127.0.0.1:28086`
 - 用户主动开启的局域网模式，仅接受私有网络来源
 - HTTPS 动态叶子证书与本地根 CA；CA 私钥仅保存在 macOS 钥匙串
 - 精确、包含、正则 URL Mock，支持方法、优先级、状态码、Header、正文和延迟
@@ -66,7 +66,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --test proxy_stress sustains_200
 1. Mac 与手机连接同一可信 Wi-Fi。
 2. 在 NetCapture 中开启“局域网”并启动代理。
 3. 将手机 Wi-Fi 的 HTTP 代理设为界面显示的 Mac IP 和端口。
-4. 扫描证书面板中的二维码，或访问 `http://<Mac-IP>:8888/__netcapture/ca.crt`。
+4. 扫描证书配置中的二维码，或访问 `http://<Mac-IP>:28086/__netcapture/ca.crt`。
 5. iOS 安装描述文件后，还需进入“设置 > 通用 > 关于本机 > 证书信任设置”开启完全信任。
 6. Android 7+ 应用默认可能不信任用户 CA；被测应用需在 Network Security Config 中明确允许。
 

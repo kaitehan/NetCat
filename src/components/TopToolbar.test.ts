@@ -6,21 +6,16 @@ import type { ProxyStatus } from '../shared/types'
 const stoppedStatus: ProxyStatus = {
   state: 'stopped',
   bindAddress: null,
-  port: 8888,
+  port: 28086,
   lanIp: null,
   error: null
 }
 
 describe('TopToolbar', () => {
-  it('separates proxy status from capture settings and utility actions', () => {
+  it('keeps only runtime controls and traffic actions in the toolbar', () => {
     render(TopToolbar, {
       props: {
         status: stoppedStatus,
-        allowLan: false,
-        captureEnabled: true,
-        systemProxyEnabled: false,
-        caGenerated: true,
-        port: 8888,
         busy: false
       }
     })
@@ -29,13 +24,12 @@ describe('TopToolbar', () => {
     expect(within(proxyGroup).getByRole('button', { name: '启动代理' })).toBeVisible()
     expect(within(proxyGroup).getByText('代理已停止')).toBeVisible()
 
-    const settingsGroup = screen.getByRole('group', { name: '代理与流量设置' })
-    expect(within(settingsGroup).getByRole('spinbutton', { name: '端口' })).toHaveValue(8888)
-    expect(within(settingsGroup).getByRole('checkbox', { name: '局域网' })).not.toBeChecked()
-    expect(within(settingsGroup).getByRole('checkbox', { name: '记录' })).toBeChecked()
-    expect(within(settingsGroup).getByRole('button', { name: '系统代理' })).toBeDisabled()
-    expect(within(settingsGroup).getByRole('button', { name: '清空流量' })).toBeVisible()
-    expect(within(settingsGroup).getByRole('button', { name: '导出 HAR' })).toBeVisible()
-    expect(within(settingsGroup).getByRole('button', { name: '证书' })).toBeVisible()
+    const actionsGroup = screen.getByRole('group', { name: '请求操作' })
+    expect(within(actionsGroup).getByRole('button', { name: '清空请求记录' })).toBeVisible()
+    expect(within(actionsGroup).getByRole('button', { name: '导出 HAR' })).toBeVisible()
+    expect(screen.queryByRole('spinbutton', { name: '端口' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: '记录' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '系统代理' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '证书' })).not.toBeInTheDocument()
   })
 })

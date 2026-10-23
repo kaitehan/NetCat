@@ -126,7 +126,7 @@ const browserMocks: MockRule[] = [
 let browserStatus: ProxyStatus = {
   state: 'stopped',
   bindAddress: null,
-  port: 8888,
+  port: 28086,
   lanIp: null,
   error: null
 }

@@ -19,7 +19,7 @@ export function useNetCapture() {
   const proxyStatus = shallowRef<ProxyStatus>({
     state: 'stopped',
     bindAddress: null,
-    port: 8888,
+    port: 28086,
     lanIp: null,
     error: null
   })
@@ -28,12 +28,13 @@ export function useNetCapture() {
   const mockRules = shallowRef<readonly MockRule[]>([])
   const caStatus = shallowRef<CaStatus>({ generated: false, certificatePath: null, fingerprint: null })
   const systemProxyEnabled = shallowRef(false)
+  const systemProxyPreferred = shallowRef(true)
   const disclaimerAccepted = shallowRef<boolean | null>(null)
   const error = shallowRef<AppError | null>(null)
   const busy = shallowRef(false)
   const allowLan = shallowRef(false)
   const captureEnabled = shallowRef(true)
-  const port = shallowRef(8888)
+  const port = shallowRef(28086)
   const unlisteners: Array<() => void> = []
   const trafficEvents = createEventBatcher(reloadTraffic, 75)
 
@@ -79,27 +80,36 @@ export function useNetCapture() {
 
   async function toggleProxy() {
     await runAction(async () => {
-      proxyStatus.value = isRunning.value
-        ? await api.stopProxy()
-        : await api.startProxy({
-          port: port.value,
-          allowLan: allowLan.value,
-          captureEnabled: captureEnabled.value
-        })
-      if (!isRunning.value) {
+      if (isRunning.value) {
+        proxyStatus.value = await api.stopProxy()
         systemProxyEnabled.value = false
+        return
+      }
+
+      proxyStatus.value = await api.startProxy({
+        port: port.value,
+        allowLan: allowLan.value,
+        captureEnabled: captureEnabled.value
+      })
+      if (systemProxyPreferred.value) {
+        await api.enableSystemProxy()
+        systemProxyEnabled.value = true
       }
     })
   }
 
-  async function toggleSystemProxy() {
+  async function setSystemProxy(enabled: boolean) {
+    systemProxyPreferred.value = enabled
+    if (!isRunning.value || enabled === systemProxyEnabled.value) {
+      return
+    }
     await runAction(async () => {
-      if (systemProxyEnabled.value) {
-        await api.restoreSystemProxy()
-      } else {
+      if (enabled) {
         await api.enableSystemProxy()
+      } else {
+        await api.restoreSystemProxy()
       }
-      systemProxyEnabled.value = !systemProxyEnabled.value
+      systemProxyEnabled.value = enabled
     })
   }
 
@@ -224,6 +234,7 @@ export function useNetCapture() {
     mockRules: readonly(mockRules),
     caStatus: readonly(caStatus),
     systemProxyEnabled: readonly(systemProxyEnabled),
+    systemProxyPreferred: readonly(systemProxyPreferred),
     disclaimerAccepted: readonly(disclaimerAccepted),
     error: readonly(error),
     busy: readonly(busy),
@@ -233,7 +244,7 @@ export function useNetCapture() {
     isRunning,
     initialize,
     toggleProxy,
-    toggleSystemProxy,
+    setSystemProxy,
     setCapture,
     selectTraffic,
     getTrafficDetail,

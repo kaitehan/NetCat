@@ -4,10 +4,10 @@ import { Search, X } from '@lucide/vue'
 import AppSidebar from './components/AppSidebar.vue'
 import FilterSelect from './components/FilterSelect.vue'
 import TopToolbar from './components/TopToolbar.vue'
-import CertificatePanel from './features/certificate/CertificatePanel.vue'
 import MockEditor from './features/mock/MockEditor.vue'
 import MockRulesPanel from './features/mock/MockRulesPanel.vue'
 import DisclaimerDialog from './features/onboarding/DisclaimerDialog.vue'
+import SettingsPage from './features/settings/SettingsPage.vue'
 import TrafficInspector from './features/traffic/TrafficInspector.vue'
 import TrafficContextMenu, { type TrafficMenuAction } from './features/traffic/TrafficContextMenu.vue'
 import TrafficTable from './features/traffic/TrafficTable.vue'
@@ -16,8 +16,7 @@ import { useNetCapture } from './composables/useNetCapture'
 import type { MockRule, ReplayMode, TrafficCopyKind, TrafficDetail, TrafficFilter, TrafficSummary } from './shared/types'
 
 const capture = useNetCapture()
-const activeView = shallowRef<'traffic' | 'mocks'>('traffic')
-const certificateOpen = shallowRef(false)
+const activeView = shallowRef<'traffic' | 'mocks' | 'settings'>('traffic')
 const mockEditorOpen = shallowRef(false)
 const editingRule = shallowRef<MockRule | null>(null)
 const mockInitialFocus = shallowRef<'headers' | 'body' | null>(null)
@@ -273,29 +272,19 @@ onMounted(() => void capture.initialize())
 
     <TopToolbar
       :status="capture.proxyStatus.value"
-      :allow-lan="capture.allowLan.value"
-      :capture-enabled="capture.captureEnabled.value"
-      :system-proxy-enabled="capture.systemProxyEnabled.value"
-      :ca-generated="capture.caStatus.value.generated"
-      :port="capture.port.value"
       :busy="capture.busy.value"
       @toggle-proxy="capture.toggleProxy"
-      @update-allow-lan="setAllowLan"
-      @update-port="setPort"
-      @toggle-capture="capture.setCapture"
-      @toggle-system-proxy="capture.toggleSystemProxy"
       @clear="capture.clearTraffic"
       @export="exportHar"
-      @certificate="certificateOpen = true"
     />
 
-    <div class="app-body">
-      <main class="workspace">
+    <div class="app-body" :class="{ 'settings-layout': activeView === 'settings' }">
+      <main class="workspace" :class="{ 'settings-workspace': activeView === 'settings' }">
         <template v-if="activeView === 'traffic'">
           <div class="filter-bar">
             <label class="search-control">
               <Search :size="14" />
-              <input v-model="filter.query" type="search" placeholder="搜索 URL 或域名" aria-label="搜索流量" />
+              <input v-model="filter.query" type="search" placeholder="搜索 URL 或域名" aria-label="搜索网络请求" />
             </label>
             <FilterSelect v-model="filter.method" label="请求方法" :options="methodOptions" />
             <FilterSelect v-model="filter.status" label="状态码" :options="statusOptions" />
@@ -324,12 +313,29 @@ onMounted(() => void capture.initialize())
         </template>
 
         <MockRulesPanel
-          v-else
+          v-else-if="activeView === 'mocks'"
           :rules="capture.mockRules.value"
           @add="openMockEditor(null)"
           @edit="openMockEditor"
           @toggle="capture.setMockEnabled"
           @delete="capture.deleteMock"
+        />
+        <SettingsPage
+          v-else
+          :proxy-status="capture.proxyStatus.value"
+          :port="capture.port.value"
+          :allow-lan="capture.allowLan.value"
+          :capture-enabled="capture.captureEnabled.value"
+          :system-proxy-preferred="capture.systemProxyPreferred.value"
+          :system-proxy-enabled="capture.systemProxyEnabled.value"
+          :ca-status="capture.caStatus.value"
+          :busy="capture.busy.value"
+          @update-port="setPort"
+          @update-allow-lan="setAllowLan"
+          @update-capture="capture.setCapture"
+          @update-system-proxy="capture.setSystemProxy"
+          @generate-ca="capture.generateCa"
+          @export-ca="exportCa"
         />
       </main>
 
@@ -338,7 +344,7 @@ onMounted(() => void capture.initialize())
         :detail="capture.selectedDetail.value"
         @copy-curl="copyCurl"
       />
-      <aside v-else class="mock-inspector">
+      <aside v-else-if="activeView === 'mocks'" class="mock-inspector">
         <h2>规则执行顺序</h2>
         <p>启用的规则按优先级从高到低匹配；优先级相同时，较早创建的规则先执行。</p>
         <dl>
@@ -363,17 +369,6 @@ onMounted(() => void capture.initialize())
     <div v-if="mockEditorOpen" class="drawer-backdrop" @click.self="mockEditorOpen = false">
       <MockEditor :rule="editingRule" :initial-focus="mockInitialFocus" @save="saveMock" @cancel="mockEditorOpen = false" />
     </div>
-
-    <CertificatePanel
-      :open="certificateOpen"
-      :ca-status="capture.caStatus.value"
-      :proxy-status="capture.proxyStatus.value"
-      :allow-lan="capture.allowLan.value"
-      :busy="capture.busy.value"
-      @close="certificateOpen = false"
-      @generate="capture.generateCa"
-      @export="exportCa"
-    />
 
     <DisclaimerDialog
       :open="capture.disclaimerAccepted.value === false"
@@ -438,6 +433,10 @@ onMounted(() => void capture.initialize())
   gap: 10px;
 }
 
+.app-body.settings-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .workspace {
   display: grid;
   min-width: 0;
@@ -451,6 +450,10 @@ onMounted(() => void capture.initialize())
 
 .workspace > :only-child {
   grid-row: 1 / -1;
+}
+
+.workspace.settings-workspace {
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .filter-bar {
@@ -674,7 +677,8 @@ onMounted(() => void capture.initialize())
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .app-body > :last-child {
+  .app-body > :deep(.inspector),
+  .app-body > .mock-inspector {
     display: none;
   }
 

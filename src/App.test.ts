@@ -7,7 +7,7 @@ import type { MockRule, ProxyStatus, TrafficDetail, TrafficSummary } from './sha
 const status: ProxyStatus = {
   state: 'stopped',
   bindAddress: null,
-  port: 8888,
+  port: 28086,
   lanIp: null,
   error: null
 }
@@ -28,8 +28,9 @@ const row: TrafficSummary = {
 }
 
 describe('App', () => {
-  it('loads persisted traffic and starts the proxy from the toolbar', async () => {
+  it('starts the proxy with defaults and automatically enables the system proxy', async () => {
     const startProxy = vi.fn().mockResolvedValue({ ...status, state: 'running' })
+    const enableSystemProxy = vi.fn()
     const api = {
       getProxyStatus: vi.fn().mockResolvedValue(status),
       startProxy,
@@ -38,7 +39,7 @@ describe('App', () => {
       getCaStatus: vi.fn().mockResolvedValue({ generated: true, certificatePath: '/ca.crt', fingerprint: 'AA' }),
       generateCa: vi.fn(),
       exportCa: vi.fn(),
-      enableSystemProxy: vi.fn(),
+      enableSystemProxy,
       restoreSystemProxy: vi.fn(),
       isSystemProxyEnabled: vi.fn().mockResolvedValue(false),
       listTraffic: vi.fn().mockResolvedValue([row]),
@@ -73,10 +74,58 @@ describe('App', () => {
     expect(screen.queryByRole('button', { name: /GET.*api\.example\.com\/users/ })).not.toBeInTheDocument()
     await fireEvent.click(screen.getByRole('button', { name: '启动代理' }))
     await waitFor(() => expect(startProxy).toHaveBeenCalledWith({
-      port: 8888,
+      port: 28086,
       allowLan: false,
       captureEnabled: true
     }))
+    await waitFor(() => expect(enableSystemProxy).toHaveBeenCalledOnce())
+  })
+
+  it('moves proxy and certificate configuration into the settings page', async () => {
+    const api = {
+      getProxyStatus: vi.fn().mockResolvedValue(status),
+      startProxy: vi.fn(),
+      stopProxy: vi.fn(),
+      setCaptureEnabled: vi.fn(),
+      getCaStatus: vi.fn().mockResolvedValue({ generated: true, certificatePath: '/ca.crt', fingerprint: 'AA' }),
+      generateCa: vi.fn(),
+      exportCa: vi.fn(),
+      enableSystemProxy: vi.fn(),
+      restoreSystemProxy: vi.fn(),
+      isSystemProxyEnabled: vi.fn().mockResolvedValue(false),
+      listTraffic: vi.fn().mockResolvedValue([]),
+      getTrafficDetail: vi.fn(),
+      clearTraffic: vi.fn(),
+      listMockRules: vi.fn().mockResolvedValue([]),
+      saveMockRule: vi.fn(),
+      deleteMockRule: vi.fn(),
+      setMockEnabled: vi.fn(),
+      exportHar: vi.fn(),
+      copyCurl: vi.fn(),
+      copyExchange: vi.fn(),
+      replayExchange: vi.fn(),
+      hasAcceptedDisclaimer: vi.fn().mockResolvedValue(true),
+      acceptDisclaimer: vi.fn(),
+      listen: vi.fn().mockResolvedValue(() => undefined)
+    } satisfies DesktopApi
+
+    render(App, {
+      global: {
+        provide: {
+          [desktopApiKey as symbol]: api
+        }
+      }
+    })
+
+    await fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    expect(await screen.findByRole('heading', { name: '设置' })).toBeVisible()
+    expect(screen.getByRole('tab', { name: '代理配置' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('spinbutton', { name: '代理端口' })).toHaveValue(28086)
+    expect(screen.getByRole('checkbox', { name: '系统代理' })).toBeChecked()
+    expect(screen.getByRole('checkbox', { name: '记录请求' })).toBeChecked()
+
+    await fireEvent.click(screen.getByRole('tab', { name: '证书配置' }))
+    expect(screen.getByText('本地 CA 已就绪')).toBeVisible()
   })
 
   it('hides a URL for the session and creates a focused Mock draft from its response', async () => {

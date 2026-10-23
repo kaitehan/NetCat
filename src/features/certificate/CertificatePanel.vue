@@ -4,8 +4,9 @@ import { CheckCircle2, Download, KeyRound, Smartphone, X } from '@lucide/vue'
 import QrcodeVue from 'qrcode.vue'
 import type { CaStatus, ProxyStatus } from '../../shared/types'
 
-const { open, caStatus, proxyStatus, allowLan, busy } = defineProps<{
-  open: boolean
+const { open = true, embedded = false, caStatus, proxyStatus, allowLan, busy } = defineProps<{
+  open?: boolean
+  embedded?: boolean
   caStatus: CaStatus
   proxyStatus: ProxyStatus
   allowLan: boolean
@@ -27,14 +28,20 @@ const certificateUrl = computed(() => {
 </script>
 
 <template>
-  <div v-if="open" class="panel-backdrop" @click.self="emit('close')">
-    <section class="certificate-panel" role="dialog" aria-modal="true" aria-labelledby="certificate-title">
+  <div v-if="open" :class="embedded ? 'embedded-panel' : 'panel-backdrop'" @click.self="!embedded && emit('close')">
+    <section
+      class="certificate-panel"
+      :class="{ embedded }"
+      :role="embedded ? 'region' : 'dialog'"
+      :aria-modal="embedded ? undefined : 'true'"
+      aria-labelledby="certificate-title"
+    >
       <header class="panel-header">
         <div>
           <h2 id="certificate-title">HTTPS 证书</h2>
           <p>仅为您授权的测试设备安装并信任此 CA</p>
         </div>
-        <button type="button" class="icon-button" title="关闭" @click="emit('close')">
+        <button v-if="!embedded" type="button" class="icon-button" title="关闭" @click="emit('close')">
           <X :size="17" />
         </button>
       </header>
@@ -104,6 +111,10 @@ const certificateUrl = computed(() => {
   background: var(--overlay);
 }
 
+.embedded-panel {
+  min-width: 0;
+}
+
 .certificate-panel {
   display: grid;
   width: min(520px, 100%);
@@ -111,6 +122,13 @@ const certificateUrl = computed(() => {
   grid-template-rows: auto minmax(0, 1fr);
   background: var(--surface);
   box-shadow: var(--shadow-panel);
+}
+
+.certificate-panel.embedded {
+  width: 100%;
+  height: auto;
+  min-height: 100%;
+  box-shadow: none;
 }
 
 .panel-header {

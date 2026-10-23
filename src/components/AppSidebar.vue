@@ -3,13 +3,13 @@ import { Braces, FlaskConical, Network, Settings } from '@lucide/vue'
 import appIcon from '../../src-tauri/icons/icon.png'
 
 const { activeView, trafficCount, mockCount } = defineProps<{
-  activeView: 'traffic' | 'mocks'
+  activeView: 'traffic' | 'mocks' | 'settings'
   trafficCount: number
   mockCount: number
 }>()
 
 const emit = defineEmits<{
-  changeView: [view: 'traffic' | 'mocks']
+  changeView: [view: 'traffic' | 'mocks' | 'settings']
 }>()
 </script>
 
@@ -24,12 +24,22 @@ const emit = defineEmits<{
     </div>
 
     <nav class="navigation" aria-label="主导航">
-      <button type="button" :class="{ active: activeView === 'traffic' }" @click="emit('changeView', 'traffic')">
+      <button
+        type="button"
+        :class="{ active: activeView === 'traffic' }"
+        aria-label="网络请求"
+        @click="emit('changeView', 'traffic')"
+      >
         <Network :size="16" />
-        <span>流量</span>
+        <span>网络请求</span>
         <b>{{ trafficCount }}</b>
       </button>
-      <button type="button" :class="{ active: activeView === 'mocks' }" @click="emit('changeView', 'mocks')">
+      <button
+        type="button"
+        :class="{ active: activeView === 'mocks' }"
+        aria-label="Mock 规则"
+        @click="emit('changeView', 'mocks')"
+      >
         <FlaskConical :size="16" />
         <span>Mock 规则</span>
         <b>{{ mockCount }}</b>
@@ -38,13 +48,18 @@ const emit = defineEmits<{
 
     <div class="sidebar-note">
       <Braces :size="14" />
-      <p>流量只保存在本机</p>
+      <p>请求数据只保存在本机</p>
     </div>
 
-    <button type="button" class="settings-row" disabled>
+    <button
+      type="button"
+      class="settings-row"
+      :class="{ active: activeView === 'settings' }"
+      aria-label="设置"
+      @click="emit('changeView', 'settings')"
+    >
       <Settings :size="15" />
-      设置
-      <span>即将推出</span>
+      <span>设置</span>
     </button>
   </aside>
 </template>
@@ -116,7 +131,8 @@ const emit = defineEmits<{
   text-align: left;
 }
 
-.navigation button.active {
+.navigation button.active,
+.settings-row.active {
   border: 1px solid var(--border);
   background: var(--sidebar-raised);
   box-shadow: var(--shadow-active);
@@ -151,10 +167,45 @@ const emit = defineEmits<{
 }
 
 .settings-row {
-  opacity: 0.52;
+  cursor: pointer;
 }
 
-.settings-row span {
-  font-size: 8px;
+.settings-row:hover:not(.active) {
+  background: var(--sidebar-hover);
+  color: var(--sidebar-text);
+}
+
+@media (max-width: 820px) {
+  .sidebar {
+    padding-right: 8px;
+    padding-left: 8px;
+  }
+
+  .brand {
+    padding-right: 0;
+    padding-left: 0;
+    justify-content: center;
+  }
+
+  .brand div,
+  .navigation button span,
+  .navigation b,
+  .sidebar-note p,
+  .settings-row span {
+    display: none;
+  }
+
+  .navigation button,
+  .settings-row {
+    padding: 0;
+    grid-template-columns: 1fr;
+    place-items: center;
+  }
+
+  .sidebar-note {
+    padding-right: 0;
+    padding-left: 0;
+    justify-content: center;
+  }
 }
 </style>

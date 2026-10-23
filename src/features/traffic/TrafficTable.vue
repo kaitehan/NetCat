@@ -128,7 +128,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
 </script>
 
 <template>
-  <section class="traffic-table" aria-label="流量列表">
+  <section class="traffic-table" aria-label="网络请求列表">
     <div class="table-head" aria-hidden="true">
       <span>方法</span>
       <span>请求</span>
@@ -143,7 +143,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
     >
       <div v-if="rows.length === 0" class="empty-state">
         <Braces :size="28" :stroke-width="1.6" />
-        <strong>等待流量</strong>
+        <strong>等待网络请求</strong>
         <span>启动代理后，请求会实时出现在这里</span>
       </div>
       <template v-else>

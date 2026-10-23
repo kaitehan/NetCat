@@ -2,10 +2,20 @@ use std::collections::BTreeMap;
 
 use netcapture_lib::{
     export::{build_curl, build_exchange_copy, build_har},
-    models::{MatchKind, MockRule, TrafficCopyKind, TrafficDraft},
+    models::{MatchKind, MockRule, ProxyConfig, ProxyStatus, TrafficCopyKind, TrafficDraft},
     rules::{select_mock, validate_rule},
     storage::Store,
 };
+
+#[test]
+fn proxy_defaults_use_the_product_port_and_capture_traffic() {
+    let config = ProxyConfig::default();
+    let status = ProxyStatus::default();
+
+    assert_eq!(config.port, 28086);
+    assert!(config.capture_enabled);
+    assert_eq!(status.port, 28086);
+}
 
 fn draft(index: usize, response_body: Vec<u8>) -> TrafficDraft {
     TrafficDraft {
