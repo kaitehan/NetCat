@@ -57,13 +57,17 @@ describe('App', () => {
       listen: vi.fn().mockResolvedValue(() => undefined)
     } satisfies DesktopApi
 
-    render(App, {
+    const { container } = render(App, {
       global: {
         provide: {
           [desktopApiKey as symbol]: api
         }
       }
     })
+
+    const sidebar = container.querySelector('.sidebar')
+    expect(sidebar).not.toBeNull()
+    expect(sidebar?.closest('.app-body')).toBeNull()
 
     expect(await screen.findByRole('button', { name: '展开 api.example.com 分组' })).toBeVisible()
     expect(screen.queryByRole('button', { name: /GET.*api\.example\.com\/users/ })).not.toBeInTheDocument()

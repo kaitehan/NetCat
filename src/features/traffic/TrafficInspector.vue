@@ -148,8 +148,10 @@ function formatHex(body: readonly number[]): string {
   min-width: 0;
   min-height: 0;
   grid-template-rows: auto auto minmax(0, 1fr);
-  border-left: 1px solid var(--border);
+  overflow: hidden;
+  border-radius: var(--radius-panel);
   background: var(--surface-raised);
+  box-shadow: var(--shadow-surface);
 }
 
 .inspector-empty {
@@ -227,7 +229,7 @@ function formatHex(body: readonly number[]): string {
   gap: 5px;
   padding: 0 8px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text-secondary);
   font-family: inherit;

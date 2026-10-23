@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Braces, FlaskConical, Network, Settings } from '@lucide/vue'
-import appIcon from '../../src-tauri/icons/icon.svg'
+import appIcon from '../../src-tauri/icons/icon.png'
 
 const { activeView, trafficCount, mockCount } = defineProps<{
   activeView: 'traffic' | 'mocks'
@@ -16,7 +16,7 @@ const emit = defineEmits<{
 <template>
   <aside class="sidebar">
     <div class="brand">
-      <img :src="appIcon" alt="" />
+      <img :src="appIcon" alt="NetCapture 应用图标" />
       <div>
         <strong>NetCapture</strong>
         <span>LOCAL PROXY</span>
@@ -54,8 +54,10 @@ const emit = defineEmits<{
   display: grid;
   min-height: 0;
   grid-template-rows: auto auto 1fr auto;
-  padding: 14px 10px 10px;
+  padding: 16px 10px 10px;
+  border-radius: var(--radius-panel);
   background: var(--sidebar);
+  box-shadow: var(--shadow-surface);
   color: var(--sidebar-text);
 }
 
@@ -69,7 +71,8 @@ const emit = defineEmits<{
 .brand img {
   width: 31px;
   height: 31px;
-  border-radius: 7px;
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-brand);
 }
 
 .brand div {
@@ -79,6 +82,7 @@ const emit = defineEmits<{
 }
 
 .brand strong {
+  color: var(--sidebar-text);
   font-size: 13px;
 }
 
@@ -104,7 +108,7 @@ const emit = defineEmits<{
   align-items: center;
   gap: 6px;
   border: 0;
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--sidebar-muted);
   font-family: inherit;
@@ -113,7 +117,14 @@ const emit = defineEmits<{
 }
 
 .navigation button.active {
+  border: 1px solid var(--border);
   background: var(--sidebar-raised);
+  box-shadow: var(--shadow-active);
+  color: var(--accent-strong);
+}
+
+.navigation button:hover:not(.active) {
+  background: var(--sidebar-hover);
   color: var(--sidebar-text);
 }
 

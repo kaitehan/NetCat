@@ -4,30 +4,46 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  --app-bg: #eef1ef;
+  --app-bg: #e7efff;
   --surface: #ffffff;
-  --surface-raised: #f8faf9;
-  --surface-hover: #f0f4f2;
-  --sidebar: #17211d;
-  --sidebar-raised: #202c27;
-  --sidebar-text: #f5f7f6;
-  --sidebar-muted: #91a299;
-  --text: #17201c;
-  --text-secondary: #46534d;
-  --text-muted: #77837d;
-  --border: #d9dfdc;
-  --border-soft: #edf0ee;
-  --border-strong: #bec8c3;
-  --accent: #57d59b;
-  --accent-strong: #18885b;
-  --accent-soft: #ddf7eb;
-  --selection: #e7f7ef;
-  --mock: #b64f35;
-  --mock-soft: #fff0eb;
-  --danger: #c2403b;
-  --danger-soft: #fff0ef;
-  --warning: #c28a22;
-  --warning-soft: #fff7e5;
+  --surface-translucent: rgb(255 255 255 / 92%);
+  --surface-raised: #f7f9fd;
+  --surface-hover: #edf3ff;
+  --sidebar: #dfe9fb;
+  --sidebar-raised: #ffffff;
+  --sidebar-text: #1f2a3d;
+  --sidebar-muted: #6d7c94;
+  --sidebar-hover: rgb(255 255 255 / 48%);
+  --text: #1f2937;
+  --text-secondary: #526077;
+  --text-muted: #7d8aa0;
+  --border: #d8e1ef;
+  --border-soft: #edf2f8;
+  --border-strong: #c5d2e4;
+  --accent: #2f6fff;
+  --accent-strong: #145ce6;
+  --accent-soft: #e8f1ff;
+  --selection: #eaf2ff;
+  --on-accent: #ffffff;
+  --mock: #0b8fb8;
+  --mock-soft: #e5f8fd;
+  --danger: #d64f4f;
+  --danger-soft: #fff0f0;
+  --danger-border: #f0b5b5;
+  --warning: #c9891b;
+  --warning-soft: #fff7e4;
+  --overlay: rgb(32 45 68 / 32%);
+  --overlay-strong: rgb(32 45 68 / 68%);
+  --shadow-panel: 0 16px 44px rgb(61 81 117 / 16%);
+  --shadow-float: 0 12px 30px rgb(61 81 117 / 18%);
+  --shadow-brand: 0 5px 14px rgb(61 81 117 / 14%);
+  --shadow-active: 0 4px 12px rgb(61 81 117 / 8%);
+  --shadow-surface: 0 2px 12px rgb(61 81 117 / 12%);
+  --shadow-toolbar: 0 2px 10px rgb(61 81 117 / 10%);
+  --radius-control: 6px;
+  --radius-panel: 8px;
+  --scrollbar: #b6c3d7;
+  --qr-surface: #ffffff;
 }
 
 * {
@@ -70,7 +86,7 @@ textarea:focus-visible {
 
 ::selection {
   background: var(--accent);
-  color: #0d1a14;
+  color: var(--on-accent);
 }
 
 ::-webkit-scrollbar {
@@ -81,6 +97,6 @@ textarea:focus-visible {
 ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: 8px;
-  background: #aeb8b3;
+  background: var(--scrollbar);
   background-clip: padding-box;
 }

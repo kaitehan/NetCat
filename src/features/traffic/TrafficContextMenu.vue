@@ -191,11 +191,10 @@ onBeforeUnmount(() => {
   z-index: 120;
   width: 194px;
   padding: 5px;
-  border: 1px solid var(--border-strong);
-  border-radius: 6px;
-  background: #18211e;
-  box-shadow: 0 14px 34px rgb(0 0 0 / 34%);
-  color: #e8efec;
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  box-shadow: var(--shadow-float);
+  color: var(--text-secondary);
 }
 
 .context-menu button,
@@ -207,7 +206,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   outline: 0;
   background: transparent;
   color: inherit;
@@ -225,7 +224,7 @@ onBeforeUnmount(() => {
 
 .context-menu button:disabled,
 .submenu button:disabled {
-  color: #91a09a;
+  color: var(--text-muted);
   opacity: 0.48;
 }
 

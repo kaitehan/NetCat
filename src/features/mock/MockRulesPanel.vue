@@ -99,9 +99,9 @@ const emit = defineEmits<{
   align-items: center;
   gap: 6px;
   border: 1px solid var(--accent-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   background: var(--accent);
-  color: #0d1a14;
+  color: var(--on-accent);
   font-family: inherit;
   font-size: 11px;
   font-weight: 700;
@@ -204,7 +204,7 @@ const emit = defineEmits<{
   height: 28px;
   place-items: center;
   border: 0;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--text-muted);
 }
@@ -239,7 +239,7 @@ const emit = defineEmits<{
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: #ffffff;
+  background: var(--qr-surface);
   content: '';
   transition: transform 140ms ease;
 }

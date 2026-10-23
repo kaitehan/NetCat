@@ -292,7 +292,7 @@ function updateMatchKind(event: Event) {
 .field textarea {
   width: 100%;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   outline: none;
   background: var(--surface-raised);
   color: var(--text);
@@ -338,7 +338,7 @@ function updateMatchKind(event: Event) {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   font-family: inherit;
   font-size: 12px;
   font-weight: 600;
@@ -355,7 +355,7 @@ function updateMatchKind(event: Event) {
   padding: 0 12px;
   border: 1px solid var(--accent-strong);
   background: var(--accent);
-  color: #0d1a14;
+  color: var(--on-accent);
 }
 
 .secondary-button {

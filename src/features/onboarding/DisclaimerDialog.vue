@@ -55,16 +55,15 @@ watch(() => open, (value) => {
   display: grid;
   place-items: center;
   padding: 24px;
-  background: rgb(15 20 18 / 72%);
+  background: var(--overlay-strong);
 }
 
 .disclaimer-dialog {
   width: min(520px, 100%);
   padding: 30px;
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
-  box-shadow: 0 24px 70px rgb(0 0 0 / 28%);
+  box-shadow: var(--shadow-panel);
 }
 
 .shield-mark {
@@ -73,7 +72,7 @@ watch(() => open, (value) => {
   height: 50px;
   margin-bottom: 20px;
   place-items: center;
-  border-radius: 8px;
+  border-radius: var(--radius-panel);
   background: var(--accent-soft);
   color: var(--accent-strong);
 }
@@ -131,9 +130,9 @@ watch(() => open, (value) => {
   width: 100%;
   height: 38px;
   border: 1px solid var(--accent-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   background: var(--accent);
-  color: #0d1a14;
+  color: var(--on-accent);
   font-family: inherit;
   font-size: 13px;
   font-weight: 700;

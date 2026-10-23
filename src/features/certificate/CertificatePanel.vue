@@ -101,7 +101,7 @@ const certificateUrl = computed(() => {
   inset: 0;
   display: flex;
   justify-content: flex-end;
-  background: rgb(15 20 18 / 38%);
+  background: var(--overlay);
 }
 
 .certificate-panel {
@@ -110,7 +110,7 @@ const certificateUrl = computed(() => {
   height: 100%;
   grid-template-rows: auto minmax(0, 1fr);
   background: var(--surface);
-  box-shadow: -18px 0 54px rgb(0 0 0 / 15%);
+  box-shadow: var(--shadow-panel);
 }
 
 .panel-header {
@@ -151,7 +151,7 @@ const certificateUrl = computed(() => {
   width: 40px;
   height: 40px;
   place-items: center;
-  border-radius: 7px;
+  border-radius: var(--radius-panel);
   background: var(--warning-soft);
   color: var(--warning);
 }
@@ -211,7 +211,7 @@ const certificateUrl = computed(() => {
   padding: 9px 10px;
   overflow-wrap: anywhere;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--surface-raised);
   color: var(--accent-strong);
   font-size: 10px;
@@ -230,8 +230,8 @@ const certificateUrl = computed(() => {
   height: 132px;
   place-items: center;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #ffffff;
+  border-radius: var(--radius-control);
+  background: var(--qr-surface);
 }
 
 @media (max-width: 480px) {
@@ -248,7 +248,7 @@ const certificateUrl = computed(() => {
   align-items: center;
   justify-content: center;
   gap: 5px;
-  border-radius: 5px;
+  border-radius: var(--radius-control);
   font-family: inherit;
   font-size: 10px;
   font-weight: 600;
@@ -269,7 +269,7 @@ const certificateUrl = computed(() => {
 .primary-button {
   border: 1px solid var(--accent-strong);
   background: var(--accent);
-  color: #0d1a14;
+  color: var(--on-accent);
 }
 
 .secondary-button {

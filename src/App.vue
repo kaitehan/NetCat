@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, shallowRef } from 'vue'
 import { Search, X } from '@lucide/vue'
 import AppSidebar from './components/AppSidebar.vue'
+import FilterSelect from './components/FilterSelect.vue'
 import TopToolbar from './components/TopToolbar.vue'
 import CertificatePanel from './features/certificate/CertificatePanel.vue'
 import MockEditor from './features/mock/MockEditor.vue'
@@ -34,6 +35,22 @@ const filter = reactive<TrafficFilter>({
   status: 'ALL',
   host: ''
 })
+const methodOptions = [
+  { value: 'ALL', label: '全部方法' },
+  { value: 'GET', label: 'GET' },
+  { value: 'POST', label: 'POST' },
+  { value: 'PUT', label: 'PUT' },
+  { value: 'PATCH', label: 'PATCH' },
+  { value: 'DELETE', label: 'DELETE' }
+] as const
+const statusOptions = [
+  { value: 'ALL', label: '全部状态' },
+  { value: '2xx', label: '2xx' },
+  { value: '3xx', label: '3xx' },
+  { value: '4xx', label: '4xx' },
+  { value: '5xx', label: '5xx' },
+  { value: 'ERR', label: '错误' }
+] as const
 
 const hiddenTrafficIds = computed<ReadonlySet<string>>(() => new Set(
   capture.traffic.value
@@ -45,6 +62,10 @@ const visibleTraffic = computed(() => showHidden.value
   ? filteredTraffic.value
   : filteredTraffic.value.filter((row) => !hiddenTrafficIds.value.has(row.id)))
 const hosts = computed(() => [...new Set(capture.traffic.value.map((row) => row.host))].sort())
+const hostOptions = computed(() => [
+  { value: '', label: '全部域名' },
+  ...hosts.value.map((host) => ({ value: host, label: host }))
+])
 const hiddenRuleCount = computed(() => hiddenUrls.value.size + hiddenHosts.value.size)
 const contextOpen = computed(() => contextRow.value !== null)
 const contextDisabledReasons = computed<Partial<Record<TrafficMenuAction, string>>>(() => {
@@ -243,6 +264,13 @@ onMounted(() => void capture.initialize())
 
 <template>
   <div class="app-shell">
+    <AppSidebar
+      :active-view="activeView"
+      :traffic-count="capture.traffic.value.length"
+      :mock-count="capture.mockRules.value.length"
+      @change-view="activeView = $event"
+    />
+
     <TopToolbar
       :status="capture.proxyStatus.value"
       :allow-lan="capture.allowLan.value"
@@ -262,13 +290,6 @@ onMounted(() => void capture.initialize())
     />
 
     <div class="app-body">
-      <AppSidebar
-        :active-view="activeView"
-        :traffic-count="capture.traffic.value.length"
-        :mock-count="capture.mockRules.value.length"
-        @change-view="activeView = $event"
-      />
-
       <main class="workspace">
         <template v-if="activeView === 'traffic'">
           <div class="filter-bar">
@@ -276,22 +297,9 @@ onMounted(() => void capture.initialize())
               <Search :size="14" />
               <input v-model="filter.query" type="search" placeholder="搜索 URL 或域名" aria-label="搜索流量" />
             </label>
-            <select v-model="filter.method" aria-label="请求方法">
-              <option value="ALL">全部方法</option>
-              <option v-for="method in ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']" :key="method" :value="method">{{ method }}</option>
-            </select>
-            <select v-model="filter.status" aria-label="状态码">
-              <option value="ALL">全部状态</option>
-              <option value="2xx">2xx</option>
-              <option value="3xx">3xx</option>
-              <option value="4xx">4xx</option>
-              <option value="5xx">5xx</option>
-              <option value="ERR">错误</option>
-            </select>
-            <select v-model="filter.host" aria-label="域名">
-              <option value="">全部域名</option>
-              <option v-for="host in hosts" :key="host" :value="host">{{ host }}</option>
-            </select>
+            <FilterSelect v-model="filter.method" label="请求方法" :options="methodOptions" />
+            <FilterSelect v-model="filter.status" label="状态码" :options="statusOptions" />
+            <FilterSelect v-model="filter.host" label="域名" :options="hostOptions" wide />
             <button
               v-if="hiddenRuleCount"
               type="button"
@@ -345,10 +353,11 @@ onMounted(() => void capture.initialize())
     </div>
 
     <footer class="status-bar">
-      <span>{{ capture.proxyStatus.value.state === 'running' ? 'HTTP/1.1 + HTTPS 捕获中' : '就绪' }}</span>
-      <span v-if="capture.proxyStatus.value.lanIp">手机代理 {{ capture.proxyStatus.value.lanIp }}:{{ capture.proxyStatus.value.port }}</span>
-      <span class="status-spacer" />
-      <span>上限 5000 条 · 正文 10 MB</span>
+      <div class="status-summary">
+        <span>{{ capture.proxyStatus.value.state === 'running' ? 'HTTP/1.1 + HTTPS 捕获中' : '就绪' }}</span>
+        <span v-if="capture.proxyStatus.value.lanIp">手机代理 {{ capture.proxyStatus.value.lanIp }}:{{ capture.proxyStatus.value.port }}</span>
+      </div>
+      <span class="status-limits">上限 5000 条 · 正文 10 MB</span>
     </footer>
 
     <div v-if="mockEditorOpen" class="drawer-backdrop" @click.self="mockEditorOpen = false">
@@ -396,18 +405,37 @@ onMounted(() => void capture.initialize())
 
 <style scoped>
 .app-shell {
+  --sidebar-width: 184px;
   display: grid;
   width: 100%;
   height: 100%;
-  grid-template-rows: 48px minmax(0, 1fr) 24px;
+  padding: 10px 10px 0;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+  grid-template-rows: 52px minmax(0, 1fr) 20px;
+  grid-template-areas:
+    "sidebar toolbar"
+    "sidebar body"
+    "sidebar status";
+  column-gap: 10px;
+  row-gap: 10px;
   background: var(--app-bg);
+}
+
+.app-shell > :deep(.sidebar) {
+  grid-area: sidebar;
+}
+
+.app-shell > :deep(.toolbar) {
+  grid-area: toolbar;
 }
 
 .app-body {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-columns: 172px minmax(440px, 1fr) minmax(320px, 390px);
+  grid-area: body;
+  grid-template-columns: minmax(440px, 1fr) minmax(330px, 390px);
+  gap: 10px;
 }
 
 .workspace {
@@ -415,7 +443,10 @@ onMounted(() => void capture.initialize())
   min-width: 0;
   min-height: 0;
   grid-template-rows: 42px minmax(0, 1fr);
-  border-left: 1px solid #0e1713;
+  overflow: hidden;
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  box-shadow: var(--shadow-surface);
 }
 
 .workspace > :only-child {
@@ -425,7 +456,7 @@ onMounted(() => void capture.initialize())
 .filter-bar {
   display: flex;
   min-width: 0;
-  padding: 6px 10px;
+  padding: 7px 10px;
   align-items: center;
   gap: 7px;
   border-bottom: 1px solid var(--border);
@@ -441,7 +472,7 @@ onMounted(() => void capture.initialize())
   gap: 6px;
   flex: 1;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text-muted);
 }
@@ -457,18 +488,6 @@ onMounted(() => void capture.initialize())
   flex: 1;
 }
 
-.filter-bar select {
-  height: 29px;
-  max-width: 132px;
-  padding: 0 7px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--surface);
-  color: var(--text-secondary);
-  font-family: inherit;
-  font-size: 10px;
-}
-
 .result-count {
   color: var(--text-muted);
   font-size: 9px;
@@ -480,7 +499,7 @@ onMounted(() => void capture.initialize())
 .clear-hidden {
   height: 29px;
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text-secondary);
   font-family: inherit;
@@ -506,8 +525,10 @@ onMounted(() => void capture.initialize())
 
 .mock-inspector {
   padding: 20px;
-  border-left: 1px solid var(--border);
+  overflow: hidden;
+  border-radius: var(--radius-panel);
   background: var(--surface-raised);
+  box-shadow: var(--shadow-surface);
 }
 
 .mock-inspector h2 {
@@ -540,17 +561,26 @@ onMounted(() => void capture.initialize())
 
 .status-bar {
   display: flex;
-  padding: 0 10px 0 184px;
+  min-width: 0;
+  grid-area: status;
   align-items: center;
-  gap: 14px;
-  border-top: 1px solid var(--border);
-  background: var(--surface-raised);
+  justify-content: space-between;
+  gap: 16px;
+  background: transparent;
   color: var(--text-muted);
   font-size: 9px;
 }
 
-.status-spacer {
-  flex: 1;
+.status-summary {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.status-limits {
+  justify-self: end;
+  white-space: nowrap;
 }
 
 .drawer-backdrop {
@@ -559,11 +589,11 @@ onMounted(() => void capture.initialize())
   inset: 0;
   display: flex;
   justify-content: flex-end;
-  background: rgb(15 20 18 / 38%);
+  background: var(--overlay);
 }
 
 .drawer-backdrop > * {
-  box-shadow: -18px 0 54px rgb(0 0 0 / 15%);
+  box-shadow: var(--shadow-panel);
 }
 
 .error-banner {
@@ -577,10 +607,10 @@ onMounted(() => void capture.initialize())
   align-items: start;
   justify-content: space-between;
   gap: 12px;
-  border: 1px solid #e8b0aa;
-  border-radius: 6px;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-control);
   background: var(--danger-soft);
-  box-shadow: 0 12px 34px rgb(0 0 0 / 14%);
+  box-shadow: var(--shadow-float);
 }
 
 .error-banner div {
@@ -616,8 +646,8 @@ onMounted(() => void capture.initialize())
   bottom: 38px;
   min-height: 32px;
   padding: 0 12px;
-  border: 1px solid #9fdabd;
-  border-radius: 5px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-family: inherit;
@@ -626,22 +656,30 @@ onMounted(() => void capture.initialize())
 }
 
 @media (max-width: 1100px) {
+  .app-shell {
+    --sidebar-width: 160px;
+  }
+
   .app-body {
-    grid-template-columns: 154px minmax(420px, 1fr) 320px;
+    grid-template-columns: minmax(420px, 1fr) 320px;
   }
 }
 
 @media (max-width: 820px) {
+  .app-shell {
+    --sidebar-width: 64px;
+  }
+
   .app-body {
-    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .app-body > :last-child {
     display: none;
   }
 
-  .status-bar {
-    padding-left: 74px;
+  .status-summary {
+    padding-left: 2px;
   }
 }
 </style>
