@@ -21,6 +21,8 @@ struct ProxySnapshot {
     platform: String,
     port: u16,
     payload: serde_json::Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    restoring: Option<bool>,
 }
 
 pub struct SystemProxyManager {
@@ -46,11 +48,12 @@ impl SystemProxyManager {
                 "NetCat 已接管系统代理",
             ));
         }
-        let snapshot = ProxySnapshot {
+        let mut snapshot = ProxySnapshot {
             version: 1,
             platform: self.backend.platform().to_owned(),
             port,
             payload: self.backend.capture()?,
+            restoring: None,
         };
         let payload = serde_json::to_string(&snapshot).map_err(|error| {
             AppError::new("SYSTEM_PROXY_ERROR", "无法保存系统代理原配置")
@@ -67,6 +70,9 @@ impl SystemProxyManager {
         if let Err(error) = applied {
             // A failed apply may leave only one protocol configured. Roll back
             // directly rather than applying the user-change guard to partial state.
+            // Try to record recovery progress, but a storage failure must not
+            // prevent the immediate best-effort rollback of OS changes.
+            let _ = self.mark_restoring(&mut snapshot);
             if self.backend.restore(&snapshot.payload).is_ok() {
                 self.store.delete_setting(SNAPSHOT_KEY)?;
             }
@@ -89,7 +95,7 @@ impl SystemProxyManager {
             // original recovery behavior so an upgrade can still restore them.
             self.backend.restore(&value)?;
         } else {
-            let snapshot: ProxySnapshot = serde_json::from_value(value).map_err(|error| {
+            let mut snapshot: ProxySnapshot = serde_json::from_value(value).map_err(|error| {
                 AppError::new("SYSTEM_PROXY_RESTORE_ERROR", "系统代理恢复记录损坏")
                     .with_detail(error.to_string())
             })?;
@@ -106,6 +112,9 @@ impl SystemProxyManager {
                 )
                 .with_action("请检查系统代理设置后重试"));
             }
+            // Persist the phase before the first OS write. A retry after a
+            // partial restore (including after restart) can recognize progress.
+            self.mark_restoring(&mut snapshot)?;
             self.backend.restore(&snapshot.payload)?;
         }
         self.store.delete_setting(SNAPSHOT_KEY)?;
@@ -114,6 +123,15 @@ impl SystemProxyManager {
 
     pub fn is_managed(&self) -> Result<bool, AppError> {
         Ok(self.store.get_setting(SNAPSHOT_KEY)?.is_some())
+    }
+
+    fn mark_restoring(&self, snapshot: &mut ProxySnapshot) -> Result<(), AppError> {
+        snapshot.restoring = Some(true);
+        let payload = serde_json::to_string(snapshot).map_err(|error| {
+            AppError::new("SYSTEM_PROXY_RESTORE_ERROR", "无法保存系统代理恢复进度")
+                .with_detail(error.to_string())
+        })?;
+        self.store.set_setting(SNAPSHOT_KEY, &payload)
     }
 }
 
@@ -360,6 +378,26 @@ mod tests {
 
         assert!(fixture.manager.enable(8888).is_err());
         assert!(fixture.manager.is_managed().unwrap());
+        let snapshot: Value =
+            serde_json::from_str(&fixture.store.get_setting(SNAPSHOT_KEY).unwrap().unwrap())
+                .unwrap();
+        assert_eq!(snapshot["restoring"], true);
+    }
+
+    #[test]
+    fn failed_restore_persists_restore_phase_for_retry() {
+        let fixture = ProxyFixture::new(false, false, true);
+        fixture.manager.enable(8888).unwrap();
+
+        assert_eq!(
+            fixture.manager.restore().unwrap_err().code,
+            "SYSTEM_PROXY_ERROR"
+        );
+
+        let snapshot: Value =
+            serde_json::from_str(&fixture.store.get_setting(SNAPSHOT_KEY).unwrap().unwrap())
+                .unwrap();
+        assert_eq!(snapshot["restoring"], true);
     }
 
     #[test]
