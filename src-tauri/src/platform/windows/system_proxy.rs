@@ -8,11 +8,25 @@ use crate::{error::AppError, platform::SystemProxyBackend};
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowsProxyConfiguration {
+    #[serde(deserialize_with = "required_option")]
     pub proxy_enable: Option<u32>,
+    #[serde(deserialize_with = "required_option")]
     pub proxy_server: Option<String>,
+    #[serde(deserialize_with = "required_option")]
     pub proxy_override: Option<String>,
+    #[serde(deserialize_with = "required_option")]
     pub auto_config_url: Option<String>,
+    #[serde(deserialize_with = "required_option")]
     pub auto_detect: Option<u32>,
+}
+
+// A present null records a missing registry value; a missing JSON field is corruption.
+fn required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
 }
 
 pub enum InternetSettingValue {
@@ -221,6 +235,7 @@ mod tests {
     #[derive(Default)]
     struct MemoryInternetSettings {
         values: Mutex<WindowsProxyConfiguration>,
+        writes: Mutex<usize>,
         notifications: Mutex<usize>,
         fail_notifications: Mutex<usize>,
         fail_write: Mutex<Option<&'static str>>,
@@ -245,6 +260,7 @@ mod tests {
             name: &'static str,
             value: Option<InternetSettingValue>,
         ) -> Result<(), AppError> {
+            *self.writes.lock().unwrap() += 1;
             let mut fail = self.fail_write.lock().unwrap();
             if *fail == Some(name) {
                 *fail = None;
@@ -507,6 +523,87 @@ mod tests {
         );
         assert_eq!(registry.read().unwrap(), original());
         assert_eq!(*registry.notifications.lock().unwrap(), 0);
+    }
+
+    #[test]
+    fn snapshot_missing_any_property_is_rejected_before_registry_writes() {
+        for field in [
+            "proxyEnable",
+            "proxyServer",
+            "proxyOverride",
+            "autoConfigUrl",
+            "autoDetect",
+        ] {
+            let registry = MemoryInternetSettings::from(original());
+            let backend = WindowsSystemProxyBackend::new(registry.clone());
+            let mut snapshot = backend.capture().unwrap();
+            snapshot.as_object_mut().unwrap().remove(field).unwrap();
+
+            let result = backend.restore(&snapshot);
+
+            assert_eq!(
+                result.unwrap_err().code,
+                "SYSTEM_PROXY_RESTORE_ERROR",
+                "{field}"
+            );
+            assert_eq!(*registry.writes.lock().unwrap(), 0, "{field}");
+            assert_eq!(*registry.notifications.lock().unwrap(), 0, "{field}");
+            assert_eq!(registry.read().unwrap(), original(), "{field}");
+        }
+    }
+
+    #[test]
+    fn coordinator_preserves_incomplete_snapshots_without_any_registry_write() {
+        use crate::system_proxy::SNAPSHOT_KEY;
+
+        for original in [original(), WindowsProxyConfiguration::default()] {
+            for restoring in [false, true] {
+                for field in [
+                    "proxyEnable",
+                    "proxyServer",
+                    "proxyOverride",
+                    "autoConfigUrl",
+                    "autoDetect",
+                ] {
+                    let registry = MemoryInternetSettings::from(original.clone());
+                    let store = Arc::new(Store::open_in_memory(100, 1024).unwrap());
+                    let first = manager(registry.clone(), store.clone());
+                    first.enable(28086).unwrap();
+                    let mut snapshot: Value =
+                        serde_json::from_str(&store.get_setting(SNAPSHOT_KEY).unwrap().unwrap())
+                            .unwrap();
+                    snapshot["payload"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove(field)
+                        .unwrap();
+                    snapshot["restoring"] = Value::Bool(restoring);
+                    let corrupted = serde_json::to_string(&snapshot).unwrap();
+                    store.set_setting(SNAPSHOT_KEY, &corrupted).unwrap();
+                    let before = registry.read().unwrap();
+                    let writes_before = *registry.writes.lock().unwrap();
+                    let notifications_before = *registry.notifications.lock().unwrap();
+
+                    let result = manager(registry.clone(), store.clone()).restore();
+
+                    assert_eq!(
+                        result.unwrap_err().code,
+                        "SYSTEM_PROXY_RESTORE_ERROR",
+                        "{field}, restoring={restoring}"
+                    );
+                    assert_eq!(*registry.writes.lock().unwrap(), writes_before);
+                    assert_eq!(
+                        *registry.notifications.lock().unwrap(),
+                        notifications_before
+                    );
+                    assert_eq!(registry.read().unwrap(), before);
+                    assert_eq!(
+                        store.get_setting(SNAPSHOT_KEY).unwrap().as_deref(),
+                        Some(corrupted.as_str())
+                    );
+                }
+            }
+        }
     }
 
     #[test]
