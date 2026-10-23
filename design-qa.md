@@ -86,4 +86,22 @@ The reference is a style-direction source for a different product, not a pixel-i
 
 - P3: the existing dark application icon retains its established brand colors rather than being recolored for the new blue theme. This is intentional because the approved scope preserves brand assets.
 
+## Sidebar Brand Alignment Pass
+
+- Source visual truth: `/var/folders/wn/pqf4d4ps6ml8kpz4s2f0zgxm0000gp/T/codex-clipboard-a1a7eb0a-2713-4dcf-85c6-81bf1e0e9da7.png` (2000 x 1277 px, device density not encoded).
+- Desktop implementation: `output/playwright/sidebar-brand-1440x900.png` (1440 x 900 CSS px at device scale factor 1).
+- Compact implementation: `output/playwright/sidebar-brand-1080x700.png` (1080 x 700 CSS px at device scale factor 1).
+- State: light theme, browser demo data loaded, proxy stopped, traffic groups collapsed, disclaimer acknowledged.
+- Full-view comparison evidence: the source and desktop implementation were opened together in one image inspection pass. The source is an annotated layout reference rather than an exact viewport clone, so the comparison focused on the highlighted brand region and its relationship to the proxy toolbar.
+- Focused region evidence: browser geometry measured the brand icon and proxy button centers at the same vertical coordinate with a 0 px delta. The rendered icon is 36 px, the title is 15 px at weight 750, and the subtitle is 9 px.
+- Fonts and typography: the larger, heavier NetCat title and slightly larger subtitle create the requested stronger visual priority without changing the existing font family or letter spacing.
+- Spacing and layout rhythm: reducing the sidebar top inset from 16 px to 6 px moves the icon/name group upward and aligns it with the primary proxy action. Navigation remains separated by 13 px of brand-bottom padding.
+- Colors and tokens: no palette or theme-token changes were introduced.
+- Image quality and asset fidelity: the existing application PNG remains sharp at 36 px and no substitute asset was created.
+- Copy and content: NetCat, 奈特猫, and LOCAL PROXY remain unchanged. At 1080 x 700 the subtitle wraps within the compact 160 px sidebar without clipping or overlap.
+- Comparison history: the initial implementation used a 31 px icon, 13 px title, and 16 px sidebar top inset, placing the brand group visibly below the proxy control. The final pass uses a 36 px icon, 15 px title, and 6 px top inset; post-fix screenshots show aligned centers at both target viewports.
+- Primary interaction checked: the first-use declaration was acknowledged to reveal the unobstructed application shell.
+- Browser console check: 0 errors and 0 warnings.
+- Findings: no actionable P0, P1, or P2 issues remain in this pass.
+
 final result: passed

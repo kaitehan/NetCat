@@ -94,7 +94,7 @@ const statusLabel = computed(() => {
   display: grid;
   min-height: 0;
   grid-template-rows: auto auto 1fr auto;
-  padding: 16px 10px 10px;
+  padding: 6px 10px 10px;
   border-radius: var(--radius-panel);
   background: var(--sidebar);
   box-shadow: var(--shadow-surface);
@@ -103,14 +103,14 @@ const statusLabel = computed(() => {
 
 .brand {
   display: flex;
-  padding: 2px 6px 17px;
+  padding: 2px 6px 13px;
   align-items: center;
-  gap: 9px;
+  gap: 10px;
 }
 
 .brand img {
-  width: 31px;
-  height: 31px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--radius-control);
   box-shadow: var(--shadow-brand);
 }
@@ -123,13 +123,16 @@ const statusLabel = computed(() => {
 
 .brand strong {
   color: var(--sidebar-text);
-  font-size: 13px;
+  font-size: 15px;
+  font-weight: 750;
+  line-height: 1.15;
 }
 
 .brand span {
   color: var(--sidebar-muted);
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 700;
+  line-height: 1.2;
 }
 
 .navigation {
