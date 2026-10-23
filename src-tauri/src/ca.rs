@@ -1,0 +1,132 @@
+use std::{fs, path::PathBuf};
+
+use hudsucker::rcgen::{
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
+    Issuer, KeyPair, KeyUsagePurpose,
+};
+use sha2::{Digest, Sha256};
+
+use crate::{error::AppError, models::CaStatus};
+
+const KEYCHAIN_SERVICE: &str = "com.netcapture.desktop";
+const KEYCHAIN_USER: &str = "root-ca-private-key";
+
+pub trait SecretStore: Clone + Send + Sync + 'static {
+    fn save_private_key(&self, value: &str) -> Result<(), AppError>;
+    fn load_private_key(&self) -> Result<Option<String>, AppError>;
+}
+
+#[derive(Clone, Default)]
+pub struct KeychainSecretStore;
+
+impl SecretStore for KeychainSecretStore {
+    fn save_private_key(&self, value: &str) -> Result<(), AppError> {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(keychain_error)?;
+        entry.set_password(value).map_err(keychain_error)
+    }
+
+    fn load_private_key(&self) -> Result<Option<String>, AppError> {
+        let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER).map_err(keychain_error)?;
+        match entry.get_password() {
+            Ok(value) => Ok(Some(value)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(keychain_error(error)),
+        }
+    }
+}
+
+pub struct CaManager<S: SecretStore> {
+    directory: PathBuf,
+    secrets: S,
+}
+
+impl<S: SecretStore> CaManager<S> {
+    pub fn new(directory: PathBuf, secrets: S) -> Self {
+        Self { directory, secrets }
+    }
+
+    pub fn certificate_path(&self) -> PathBuf {
+        self.directory.join("netcapture-ca.crt")
+    }
+
+    pub fn generate(&self) -> Result<CaStatus, AppError> {
+        fs::create_dir_all(&self.directory).map_err(file_error)?;
+        let key_pair = KeyPair::generate().map_err(certificate_error)?;
+        let mut params = CertificateParams::default();
+        let mut distinguished_name = DistinguishedName::new();
+        distinguished_name.push(DnType::CommonName, "NetCapture Local Root CA");
+        distinguished_name.push(DnType::OrganizationName, "NetCapture Local Development");
+        params.distinguished_name = distinguished_name;
+        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        params.key_usages = vec![
+            KeyUsagePurpose::KeyCertSign,
+            KeyUsagePurpose::DigitalSignature,
+            KeyUsagePurpose::CrlSign,
+        ];
+        params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+        let certificate = params.self_signed(&key_pair).map_err(certificate_error)?;
+        let certificate_pem = certificate.pem();
+        let private_key_pem = key_pair.serialize_pem();
+        self.secrets.save_private_key(&private_key_pem)?;
+        fs::write(self.certificate_path(), certificate_pem.as_bytes()).map_err(file_error)?;
+        self.status()
+    }
+
+    pub fn status(&self) -> Result<CaStatus, AppError> {
+        let path = self.certificate_path();
+        if !path.exists() || self.secrets.load_private_key()?.is_none() {
+            return Ok(CaStatus {
+                generated: false,
+                certificate_path: None,
+                fingerprint: None,
+            });
+        }
+        let certificate_pem = fs::read_to_string(&path).map_err(file_error)?;
+        let fingerprint = fingerprint(&certificate_pem);
+        Ok(CaStatus {
+            generated: true,
+            certificate_path: Some(path.to_string_lossy().into_owned()),
+            fingerprint: Some(fingerprint),
+        })
+    }
+
+    pub fn load_issuer(&self) -> Result<Issuer<'static, KeyPair>, AppError> {
+        let certificate_pem = fs::read_to_string(self.certificate_path()).map_err(file_error)?;
+        let private_key_pem = self.secrets.load_private_key()?.ok_or_else(|| {
+            AppError::new("CA_KEY_MISSING", "钥匙串中找不到 CA 私钥")
+                .with_action("请重新生成本地 CA")
+        })?;
+        let key_pair = KeyPair::from_pem(&private_key_pem).map_err(certificate_error)?;
+        Issuer::from_ca_cert_pem(&certificate_pem, key_pair).map_err(certificate_error)
+    }
+
+    pub fn export_public_certificate(&self, destination: PathBuf) -> Result<(), AppError> {
+        fs::copy(self.certificate_path(), destination).map_err(file_error)?;
+        Ok(())
+    }
+}
+
+fn fingerprint(certificate_pem: &str) -> String {
+    let digest = Sha256::digest(certificate_pem.as_bytes());
+    digest
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<Vec<_>>()
+        .join(":")
+}
+
+fn keychain_error(error: keyring::Error) -> AppError {
+    AppError::new("KEYCHAIN_ERROR", "无法访问 macOS 钥匙串")
+        .with_detail(error.to_string())
+        .with_action("请允许 NetCapture 访问钥匙串后重试")
+}
+
+fn certificate_error(error: impl std::fmt::Display) -> AppError {
+    AppError::new("CA_ERROR", "无法生成或加载本地 CA").with_detail(error.to_string())
+}
+
+fn file_error(error: std::io::Error) -> AppError {
+    AppError::new("FILE_ERROR", "无法读写 CA 证书文件")
+        .with_detail(error.to_string())
+        .with_action("请检查应用数据目录权限")
+}

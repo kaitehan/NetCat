@@ -1,0 +1,318 @@
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
+
+use netcapture_lib::{
+    ca::{CaManager, SecretStore},
+    models::{MatchKind, MockRule, ProxyConfig, ProxyState, ReplayMode, TrafficDraft},
+    proxy::{ProxyEventSink, ProxyService},
+    storage::Store,
+};
+
+#[derive(Clone, Default)]
+struct MemorySecrets(Arc<Mutex<Option<String>>>);
+
+#[derive(Default)]
+struct CollectingEvents(Mutex<Vec<String>>);
+
+impl ProxyEventSink for CollectingEvents {
+    fn traffic_created(&self, id: &str) {
+        self.0.lock().unwrap().push(format!("created:{id}"));
+    }
+
+    fn traffic_updated(&self, id: &str) {
+        self.0.lock().unwrap().push(format!("updated:{id}"));
+    }
+}
+
+fn replay_source(url: String) -> TrafficDraft {
+    let host = url::Url::parse(&url)
+        .unwrap()
+        .host_str()
+        .unwrap()
+        .to_string();
+    TrafficDraft {
+        id: "source".into(),
+        started_at: "2026-10-23T10:00:00Z".into(),
+        method: "POST".into(),
+        url,
+        host,
+        status: Some(201),
+        duration_ms: Some(10),
+        request_headers: BTreeMap::from([
+            ("content-type".into(), "text/plain".into()),
+            ("content-length".into(), "7".into()),
+        ]),
+        response_headers: BTreeMap::new(),
+        request_body: b"payload".to_vec(),
+        response_body: Vec::new(),
+        content_type: None,
+        mocked: false,
+        error: None,
+    }
+}
+
+#[tokio::test]
+async fn replay_works_while_proxy_is_stopped_and_preserves_request_body() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let upstream = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0_u8; 2048];
+        let read = socket.read(&mut request).await.unwrap();
+        let text = String::from_utf8_lossy(&request[..read]);
+        assert!(text.contains("POST /replay"));
+        assert!(text.ends_with("payload"));
+        socket
+            .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+            .await
+            .unwrap();
+    });
+    let store = Arc::new(Store::open_in_memory(5000, 1024).unwrap());
+    store
+        .insert_exchange(replay_source(format!("http://{address}/replay")))
+        .unwrap();
+    let events = Arc::new(CollectingEvents::default());
+    let service = ProxyService::with_event_sink(Arc::clone(&store), events.clone());
+
+    let result = service
+        .replay("source", ReplayMode::Upstream)
+        .await
+        .unwrap();
+
+    upstream.await.unwrap();
+    assert_eq!(result.exchange.status, Some(202));
+    assert!(!result.mocked);
+    assert_eq!(
+        store
+            .get_traffic_detail(&result.exchange_id)
+            .unwrap()
+            .response_body,
+        b"ok"
+    );
+    assert_eq!(events.0.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn mock_aware_replay_uses_current_rule_without_running_proxy() {
+    let store = Arc::new(Store::open_in_memory(5000, 1024).unwrap());
+    store
+        .insert_exchange(replay_source("http://unresolvable.invalid/replay".into()))
+        .unwrap();
+    store
+        .save_mock_rule(&MockRule {
+            id: "replay-mock".into(),
+            name: "replay".into(),
+            enabled: true,
+            priority: 1,
+            methods: vec!["POST".into()],
+            match_kind: MatchKind::Exact,
+            url_pattern: "http://unresolvable.invalid/replay".into(),
+            status: 203,
+            response_headers: BTreeMap::from([("content-type".into(), "text/plain".into())]),
+            response_body: "mocked".into(),
+            delay_ms: 0,
+            created_at: "2026-10-23T10:00:00Z".into(),
+        })
+        .unwrap();
+    let service = ProxyService::new(Arc::clone(&store));
+
+    let result = service
+        .replay("source", ReplayMode::MockAware)
+        .await
+        .unwrap();
+
+    assert!(result.mocked);
+    assert_eq!(result.exchange.status, Some(203));
+    assert_eq!(
+        store
+            .get_traffic_detail(&result.exchange_id)
+            .unwrap()
+            .response_body,
+        b"mocked"
+    );
+}
+
+impl SecretStore for MemorySecrets {
+    fn save_private_key(&self, value: &str) -> Result<(), netcapture_lib::error::AppError> {
+        *self.0.lock().unwrap() = Some(value.to_string());
+        Ok(())
+    }
+
+    fn load_private_key(&self) -> Result<Option<String>, netcapture_lib::error::AppError> {
+        Ok(self.0.lock().unwrap().clone())
+    }
+}
+
+#[tokio::test]
+async fn proxy_serves_mock_and_persists_exchange() {
+    let directory = tempfile::tempdir().unwrap();
+    let ca = CaManager::new(directory.path().to_path_buf(), MemorySecrets::default());
+    ca.generate().unwrap();
+    let store = Arc::new(Store::open_in_memory(5000, 10 * 1024 * 1024).unwrap());
+    store
+        .save_mock_rule(&MockRule {
+            id: "mock-1".into(),
+            name: "users".into(),
+            enabled: true,
+            priority: 10,
+            methods: vec!["GET".into()],
+            match_kind: MatchKind::Contains,
+            url_pattern: "/users".into(),
+            status: 200,
+            response_headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
+            response_body: "{\"source\":\"mock\"}".into(),
+            delay_ms: 0,
+            created_at: "2026-10-23T10:00:00Z".into(),
+        })
+        .unwrap();
+    let events = Arc::new(CollectingEvents::default());
+    let service = ProxyService::with_event_sink(Arc::clone(&store), events.clone());
+
+    let status = service
+        .start(
+            ProxyConfig {
+                port: 0,
+                allow_lan: false,
+                capture_enabled: true,
+            },
+            ca.load_issuer().unwrap(),
+            std::fs::read(ca.certificate_path()).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(status.state, ProxyState::Running);
+
+    let proxy_url = format!("http://127.0.0.1:{}", status.port);
+    let client = reqwest::Client::builder()
+        .proxy(reqwest::Proxy::all(proxy_url).unwrap())
+        .build()
+        .unwrap();
+    let response = client
+        .get("http://unresolvable.invalid/users")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.text().await.unwrap(), "{\"source\":\"mock\"}");
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let rows = store.list_traffic(Default::default(), None, 20).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].mocked);
+    assert_eq!(rows[0].host, "unresolvable.invalid");
+    let event_names = events.0.lock().unwrap().clone();
+    assert_eq!(event_names.len(), 2);
+    assert!(event_names[0].starts_with("created:"));
+    assert!(event_names[1].starts_with("updated:"));
+
+    let stopped = service.stop().await.unwrap();
+    assert_eq!(stopped.state, ProxyState::Stopped);
+}
+
+#[tokio::test]
+async fn proxy_forwards_a_real_http_upstream_response() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_address = listener.local_addr().unwrap();
+    let upstream = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0_u8; 2048];
+        let read = socket.read(&mut request).await.unwrap();
+        assert!(String::from_utf8_lossy(&request[..read]).contains("GET /health"));
+        socket.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\nConnection: close\r\n\r\n{\"ok\":true}",
+        ).await.unwrap();
+    });
+
+    let directory = tempfile::tempdir().unwrap();
+    let ca = CaManager::new(directory.path().to_path_buf(), MemorySecrets::default());
+    ca.generate().unwrap();
+    let store = Arc::new(Store::open_in_memory(5000, 10 * 1024 * 1024).unwrap());
+    let service = ProxyService::new(Arc::clone(&store));
+    let status = service
+        .start(
+            ProxyConfig {
+                port: 0,
+                allow_lan: false,
+                capture_enabled: true,
+            },
+            ca.load_issuer().unwrap(),
+            std::fs::read(ca.certificate_path()).unwrap(),
+        )
+        .await
+        .unwrap();
+    let client = reqwest::Client::builder()
+        .proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{}", status.port)).unwrap())
+        .build()
+        .unwrap();
+
+    let response = client
+        .get(format!("http://{upstream_address}/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.text().await.unwrap(), "{\"ok\":true}");
+    upstream.await.unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let rows = store.list_traffic(Default::default(), None, 20).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(!rows[0].mocked);
+    service.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn https_mock_uses_a_leaf_certificate_trusted_by_the_generated_ca() {
+    let directory = tempfile::tempdir().unwrap();
+    let ca = CaManager::new(directory.path().to_path_buf(), MemorySecrets::default());
+    ca.generate().unwrap();
+    let certificate_pem = std::fs::read(ca.certificate_path()).unwrap();
+    let store = Arc::new(Store::open_in_memory(5000, 10 * 1024 * 1024).unwrap());
+    store
+        .save_mock_rule(&MockRule {
+            id: "https-mock".into(),
+            name: "secure users".into(),
+            enabled: true,
+            priority: 20,
+            methods: vec!["GET".into()],
+            match_kind: MatchKind::Contains,
+            url_pattern: "/secure".into(),
+            status: 200,
+            response_headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
+            response_body: "{\"tls\":true}".into(),
+            delay_ms: 0,
+            created_at: "2026-10-23T10:00:00Z".into(),
+        })
+        .unwrap();
+    let service = ProxyService::new(Arc::clone(&store));
+    let status = service
+        .start(
+            ProxyConfig {
+                port: 0,
+                allow_lan: false,
+                capture_enabled: true,
+            },
+            ca.load_issuer().unwrap(),
+            certificate_pem.clone(),
+        )
+        .await
+        .unwrap();
+    let client = reqwest::Client::builder()
+        .proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{}", status.port)).unwrap())
+        .add_root_certificate(reqwest::Certificate::from_pem(&certificate_pem).unwrap())
+        .build()
+        .unwrap();
+
+    let response = client
+        .get("https://unresolvable.invalid/secure")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.text().await.unwrap(), "{\"tls\":true}");
+    service.stop().await.unwrap();
+}

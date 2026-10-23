@@ -1,0 +1,168 @@
+import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { describe, expect, it, vi } from 'vitest'
+import App from './App.vue'
+import { desktopApiKey, type DesktopApi } from './api/desktop'
+import type { MockRule, ProxyStatus, TrafficDetail, TrafficSummary } from './shared/types'
+
+const status: ProxyStatus = {
+  state: 'stopped',
+  bindAddress: null,
+  port: 8888,
+  lanIp: null,
+  error: null
+}
+
+const row: TrafficSummary = {
+  id: '1',
+  startedAt: '2026-10-23T10:00:00Z',
+  method: 'GET',
+  url: 'https://api.example.com/users',
+  host: 'api.example.com',
+  status: 200,
+  durationMs: 42,
+  responseBytes: 512,
+  contentType: 'application/json',
+  mocked: false,
+  truncated: false,
+  error: null
+}
+
+describe('App', () => {
+  it('loads persisted traffic and starts the proxy from the toolbar', async () => {
+    const startProxy = vi.fn().mockResolvedValue({ ...status, state: 'running' })
+    const api = {
+      getProxyStatus: vi.fn().mockResolvedValue(status),
+      startProxy,
+      stopProxy: vi.fn(),
+      setCaptureEnabled: vi.fn(),
+      getCaStatus: vi.fn().mockResolvedValue({ generated: true, certificatePath: '/ca.crt', fingerprint: 'AA' }),
+      generateCa: vi.fn(),
+      exportCa: vi.fn(),
+      enableSystemProxy: vi.fn(),
+      restoreSystemProxy: vi.fn(),
+      isSystemProxyEnabled: vi.fn().mockResolvedValue(false),
+      listTraffic: vi.fn().mockResolvedValue([row]),
+      getTrafficDetail: vi.fn(),
+      clearTraffic: vi.fn(),
+      listMockRules: vi.fn().mockResolvedValue([]),
+      saveMockRule: vi.fn(),
+      deleteMockRule: vi.fn(),
+      setMockEnabled: vi.fn(),
+      exportHar: vi.fn(),
+      copyCurl: vi.fn(),
+      copyExchange: vi.fn(),
+      replayExchange: vi.fn(),
+      hasAcceptedDisclaimer: vi.fn().mockResolvedValue(true),
+      acceptDisclaimer: vi.fn(),
+      listen: vi.fn().mockResolvedValue(() => undefined)
+    } satisfies DesktopApi
+
+    render(App, {
+      global: {
+        provide: {
+          [desktopApiKey as symbol]: api
+        }
+      }
+    })
+
+    expect(await screen.findByRole('button', { name: '展开 api.example.com 分组' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: /GET.*api\.example\.com\/users/ })).not.toBeInTheDocument()
+    await fireEvent.click(screen.getByRole('button', { name: '启动代理' }))
+    await waitFor(() => expect(startProxy).toHaveBeenCalledWith({
+      port: 8888,
+      allowLan: false,
+      captureEnabled: true
+    }))
+  })
+
+  it('hides a URL for the session and creates a focused Mock draft from its response', async () => {
+    const detail: TrafficDetail = {
+      ...row,
+      requestHeaders: { accept: 'application/json' },
+      responseHeaders: {
+        'content-type': 'application/json',
+        'content-length': '11',
+        'content-encoding': 'gzip',
+        'x-source': 'upstream'
+      },
+      requestBody: [],
+      responseBody: [...new TextEncoder().encode('{"ok":true}')],
+      requestBodyText: '',
+      responseBodyText: '{"ok":true}',
+      requestOriginalBytes: 0,
+      responseOriginalBytes: 11
+    }
+    const existingRule: MockRule = {
+      id: 'existing',
+      name: 'existing',
+      enabled: true,
+      priority: 5,
+      methods: ['GET'],
+      matchKind: 'contains',
+      urlPattern: '/old',
+      status: 200,
+      responseHeaders: {},
+      responseBody: '',
+      delayMs: 0,
+      createdAt: '2026-10-23T09:00:00Z'
+    }
+    const api = {
+      getProxyStatus: vi.fn().mockResolvedValue(status),
+      startProxy: vi.fn(),
+      stopProxy: vi.fn(),
+      setCaptureEnabled: vi.fn(),
+      getCaStatus: vi.fn().mockResolvedValue({ generated: true, certificatePath: '/ca.crt', fingerprint: 'AA' }),
+      generateCa: vi.fn(),
+      exportCa: vi.fn(),
+      enableSystemProxy: vi.fn(),
+      restoreSystemProxy: vi.fn(),
+      isSystemProxyEnabled: vi.fn().mockResolvedValue(false),
+      listTraffic: vi.fn().mockResolvedValue([row]),
+      getTrafficDetail: vi.fn().mockResolvedValue(detail),
+      clearTraffic: vi.fn(),
+      listMockRules: vi.fn().mockResolvedValue([existingRule]),
+      saveMockRule: vi.fn(),
+      deleteMockRule: vi.fn(),
+      setMockEnabled: vi.fn(),
+      exportHar: vi.fn(),
+      copyCurl: vi.fn(),
+      copyExchange: vi.fn(),
+      replayExchange: vi.fn(),
+      hasAcceptedDisclaimer: vi.fn().mockResolvedValue(true),
+      acceptDisclaimer: vi.fn(),
+      listen: vi.fn().mockResolvedValue(() => undefined)
+    } satisfies DesktopApi
+
+    render(App, {
+      global: {
+        provide: {
+          [desktopApiKey as symbol]: api
+        }
+      }
+    })
+
+    const group = await screen.findByRole('button', { name: '展开 api.example.com 分组' })
+    await fireEvent.click(group)
+    let trafficRow = screen.getByRole('button', { name: /GET.*api\.example\.com\/users/ })
+    await fireEvent.contextMenu(trafficRow, { clientX: 80, clientY: 90 })
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '屏蔽' }))
+    await fireEvent.click(screen.getByRole('menuitem', { name: '屏蔽完整 URL' }))
+
+    expect(screen.queryByRole('button', { name: /GET.*api\.example\.com\/users/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '已屏蔽 1' })).toBeVisible()
+    await fireEvent.click(screen.getByRole('button', { name: '已屏蔽 1' }))
+    trafficRow = screen.getByRole('button', { name: /GET.*api\.example\.com\/users/ })
+    expect(trafficRow).toHaveTextContent('已屏蔽')
+
+    await fireEvent.contextMenu(trafficRow, { clientX: 80, clientY: 90 })
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '替换内容' }))
+
+    expect(screen.queryByRole('button', { name: '已屏蔽该 URL，点击撤销' })).not.toBeInTheDocument()
+    expect(await screen.findByDisplayValue('替换响应内容 · GET /users')).toBeVisible()
+    expect(screen.getByLabelText('URL 匹配')).toHaveValue(row.url)
+    expect(screen.getByLabelText('优先级')).toHaveValue(6)
+    expect(screen.getByLabelText('响应正文')).toHaveValue('{"ok":true}')
+    expect(screen.getByLabelText('响应头')).toHaveValue('content-type: application/json\nx-source: upstream')
+    expect(screen.getByLabelText('响应正文')).toHaveFocus()
+  })
+})
