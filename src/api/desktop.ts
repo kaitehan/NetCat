@@ -6,10 +6,14 @@ import { save } from '@tauri-apps/plugin-dialog'
 import type {
   AppError,
   CaStatus,
+  DiagnosticLog,
   MockRule,
+  MockRuleTestResult,
   ProxyConfig,
   ProxyStatus,
   ReplayMode,
+  ReplayDraft,
+  ReplayRequest,
   ReplayResult,
   TrafficCopyKind,
   TrafficDetail,
@@ -37,14 +41,21 @@ export interface DesktopApi {
   listTraffic(): Promise<TrafficSummary[]>
   getTrafficDetail(id: string): Promise<TrafficDetail>
   clearTraffic(): Promise<void>
+  checkDatabaseIntegrity?(): Promise<string>
+  exportDiagnosticBundle?(logs: readonly DiagnosticLog[]): Promise<void>
   listMockRules(): Promise<MockRule[]>
   saveMockRule(rule: MockRule): Promise<MockRule>
   deleteMockRule(id: string): Promise<void>
   setMockEnabled(id: string, enabled: boolean): Promise<void>
+  duplicateMockRule?(id: string): Promise<MockRule>
+  reorderMockRules?(orderedIds: readonly string[]): Promise<void>
+  testMockRules?(method: string, url: string): Promise<MockRuleTestResult>
   exportHar(): Promise<void>
   copyCurl(id: string): Promise<void>
   copyExchange(id: string, kind: TrafficCopyKind): Promise<void>
   replayExchange(id: string, mode: ReplayMode): Promise<ReplayResult>
+  getReplayDraft?(id: string): Promise<ReplayDraft>
+  sendReplay?(request: ReplayRequest): Promise<ReplayResult>
   hasAcceptedDisclaimer(): Promise<boolean>
   acceptDisclaimer(): Promise<void>
   openDevtools(): Promise<void>
@@ -195,6 +206,10 @@ const browserApi: DesktopApi = {
   async clearTraffic() {
     browserRows.splice(0)
   },
+  async checkDatabaseIntegrity() {
+    return 'ok'
+  },
+  async exportDiagnosticBundle() {},
   async listMockRules() {
     return browserMocks
   },
@@ -224,6 +239,26 @@ const browserApi: DesktopApi = {
       rule.enabled = enabled
     }
   },
+  async duplicateMockRule(id) {
+    const source = browserMocks.find((candidate) => candidate.id === id)
+    if (!source) {
+      throw new Error('未找到该 Mock 规则')
+    }
+    const copy = { ...source, id: crypto.randomUUID(), name: `${source.name} 副本`, hitCount: 0 }
+    browserMocks.push(copy)
+    return copy
+  },
+  async reorderMockRules(orderedIds) {
+    const byId = new Map(browserMocks.map((rule) => [rule.id, rule]))
+    browserMocks.splice(0, browserMocks.length, ...orderedIds.map((id) => byId.get(id)!).filter(Boolean))
+  },
+  async testMockRules(method, url) {
+    const matches = browserMocks
+      .filter((rule) => rule.enabled && rule.methods.includes(method) && url.includes(rule.urlPattern))
+      .sort((left, right) => right.priority - left.priority)
+      .map((rule) => ({ ruleId: rule.id, name: rule.name, priority: rule.priority }))
+    return { matches, selectedRuleId: matches[0]?.ruleId ?? null, conflict: matches.length > 1 }
+  },
   async exportHar() {},
   async copyCurl(id) {
     const row = browserRows.find((candidate) => candidate.id === id)
@@ -250,6 +285,34 @@ const browserApi: DesktopApi = {
       ...original,
       id: crypto.randomUUID(),
       startedAt: new Date().toISOString()
+    }
+    browserRows.unshift(exchange)
+    return { exchangeId: exchange.id, mocked: false, exchange }
+  },
+  async getReplayDraft(id) {
+    const detail = await this.getTrafficDetail(id)
+    return {
+      sourceExchangeId: id,
+      method: detail.method,
+      url: detail.url,
+      headers: detail.requestHeaders,
+      body: detail.requestBody,
+      bodyText: detail.requestBodyText,
+      contentType: detail.requestHeaders['content-type'] ?? null,
+      binary: detail.requestBody.length > 0 && detail.requestBodyText === null
+    }
+  },
+  async sendReplay(request) {
+    const source = await this.getTrafficDetail(request.sourceExchangeId)
+    const exchange = {
+      ...source,
+      id: crypto.randomUUID(),
+      startedAt: new Date().toISOString(),
+      method: request.method,
+      url: request.url,
+      requestHeaders: request.headers,
+      requestBody: request.body,
+      sourceExchangeId: request.sourceExchangeId
     }
     browserRows.unshift(exchange)
     return { exchangeId: exchange.id, mocked: false, exchange }
@@ -291,10 +354,20 @@ const tauriApi: DesktopApi = {
   listTraffic: () => invoke('list_traffic', { filter: {}, cursor: null, limit: 500 }),
   getTrafficDetail: (id) => invoke('get_traffic_detail', { id }),
   clearTraffic: () => invoke('clear_traffic'),
+  checkDatabaseIntegrity: () => invoke('check_database_integrity'),
+  async exportDiagnosticBundle(logs) {
+    const destination = await save({ defaultPath: 'netcat-diagnostics.zip', filters: [{ name: 'ZIP Archive', extensions: ['zip'] }] })
+    if (destination) {
+      await invoke('export_diagnostic_bundle', { destination, logs })
+    }
+  },
   listMockRules: () => invoke('list_mock_rules'),
   saveMockRule: (rule) => invoke('save_mock_rule', { rule }),
   deleteMockRule: (id) => invoke('delete_mock_rule', { id }),
   setMockEnabled: (id, enabled) => invoke('set_mock_enabled', { id, enabled }),
+  duplicateMockRule: (id) => invoke('duplicate_mock_rule', { id }),
+  reorderMockRules: (orderedIds) => invoke('reorder_mock_rules', { orderedIds }),
+  testMockRules: (method, url) => invoke('test_mock_rules', { method, url }),
   async exportHar() {
     const destination = await save({ defaultPath: 'netcat-session.har', filters: [{ name: 'HTTP Archive', extensions: ['har'] }] })
     if (destination) {
@@ -310,6 +383,8 @@ const tauriApi: DesktopApi = {
     await writeText(content)
   },
   replayExchange: (id, mode) => invoke('replay_exchange', { exchangeId: id, mode }),
+  getReplayDraft: (id) => invoke('get_replay_draft', { exchangeId: id }),
+  sendReplay: (request) => invoke('send_replay', { request }),
   hasAcceptedDisclaimer: () => invoke('has_accepted_disclaimer'),
   acceptDisclaimer: () => invoke('accept_disclaimer'),
   openDevtools: () => invoke('open_devtools'),

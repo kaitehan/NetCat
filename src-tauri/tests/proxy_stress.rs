@@ -47,6 +47,10 @@ async fn sustains_200_qps_for_60_seconds_and_keeps_5000_rows() {
             response_body: "{\"ok\":true}".into(),
             delay_ms: 0,
             created_at: "2026-10-23T10:00:00Z".into(),
+            hit_count: 0,
+            last_hit_at: None,
+            last_exchange_id: None,
+            source_exchange_id: None,
         })
         .unwrap();
     let service = ProxyService::new(Arc::clone(&store));

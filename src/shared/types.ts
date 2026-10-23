@@ -26,6 +26,8 @@ export interface TrafficSummary {
   contentType: string | null
   mocked: boolean
   truncated: boolean
+  sourceExchangeId?: string | null
+  matchedMockRuleId?: string | null
   error: string | null
 }
 
@@ -81,6 +83,26 @@ export type TrafficCopyKind =
 
 export type ReplayMode = 'upstream' | 'mockAware'
 
+export interface ReplayDraft {
+  sourceExchangeId: string
+  method: string
+  url: string
+  headers: Readonly<Record<string, string>>
+  body: readonly number[]
+  bodyText: string | null
+  contentType: string | null
+  binary: boolean
+}
+
+export interface ReplayRequest {
+  sourceExchangeId: string
+  method: string
+  url: string
+  headers: Readonly<Record<string, string>>
+  body: readonly number[]
+  mode: ReplayMode
+}
+
 export interface ReplayResult {
   exchangeId: string
   mocked: boolean
@@ -102,6 +124,22 @@ export interface MockRule {
   responseBody: string
   delayMs: number
   createdAt: string
+  hitCount?: number
+  lastHitAt?: string | null
+  lastExchangeId?: string | null
+  sourceExchangeId?: string | null
+}
+
+export interface MockRuleMatch {
+  ruleId: string
+  name: string
+  priority: number
+}
+
+export interface MockRuleTestResult {
+  matches: readonly MockRuleMatch[]
+  selectedRuleId: string | null
+  conflict: boolean
 }
 
 export interface AppError {

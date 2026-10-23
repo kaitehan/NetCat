@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { Edit3, FlaskConical, Plus, Trash2 } from '@lucide/vue'
-import type { MockRule } from '../../shared/types'
+import { ArrowDown, ArrowUp, Copy, Edit3, FlaskConical, Play, Plus, Trash2 } from '@lucide/vue'
+import { reactive } from 'vue'
+import type { MockRule, MockRuleTestResult } from '../../shared/types'
 
-const { rules } = defineProps<{
+const { rules, testResult } = defineProps<{
   rules: readonly MockRule[]
+  testResult: MockRuleTestResult | null
 }>()
 
 const emit = defineEmits<{
@@ -11,7 +13,19 @@ const emit = defineEmits<{
   edit: [rule: MockRule]
   toggle: [id: string, enabled: boolean]
   delete: [id: string]
+  duplicate: [id: string]
+  move: [id: string, direction: -1 | 1]
+  test: [payload: { method: string; url: string }]
 }>()
+
+const testInput = reactive({
+  method: 'GET',
+  url: 'https://example.com/api'
+})
+
+function formatLastHit(value?: string | null) {
+  return value ? new Date(value).toLocaleString() : '尚未命中'
+}
 </script>
 
 <template>
@@ -26,6 +40,28 @@ const emit = defineEmits<{
         新建规则
       </button>
     </header>
+
+    <form class="rule-tester" @submit.prevent="emit('test', testInput)">
+      <select v-model="testInput.method" aria-label="测试请求方法">
+        <option v-for="method in ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']" :key="method" :value="method">
+          {{ method }}
+        </option>
+      </select>
+      <input v-model.trim="testInput.url" type="url" required aria-label="测试 URL" placeholder="https://example.com/api" />
+      <button type="submit" class="test-button">
+        <Play :size="14" />
+        测试规则
+      </button>
+    </form>
+
+    <div v-if="testResult" class="test-result" :class="{ conflict: testResult.conflict }" role="status">
+      <strong v-if="testResult.selectedRuleId">
+        生效规则：{{ testResult.matches.find((match) => match.ruleId === testResult.selectedRuleId)?.name }}
+      </strong>
+      <strong v-else>没有匹配的规则</strong>
+      <span v-if="testResult.conflict">共匹配 {{ testResult.matches.length }} 条，优先级最高的规则生效</span>
+      <span v-else-if="testResult.matches.length">匹配结果与运行时一致</span>
+    </div>
 
     <div v-if="rules.length === 0" class="rules-empty">
       <FlaskConical :size="30" :stroke-width="1.5" />
@@ -49,11 +85,23 @@ const emit = defineEmits<{
             <span class="match-kind">{{ rule.matchKind }}</span>
           </div>
           <code>{{ rule.urlPattern }}</code>
+          <small>命中 {{ rule.hitCount ?? 0 }} 次 · {{ formatLastHit(rule.lastHitAt) }}</small>
         </div>
         <div class="rule-response">
           <strong>{{ rule.status }}</strong>
           <span>{{ rule.delayMs }} ms</span>
         </div>
+        <div class="priority-actions">
+          <button type="button" class="icon-button" title="提高优先级" @click="emit('move', rule.id, -1)">
+            <ArrowUp :size="14" />
+          </button>
+          <button type="button" class="icon-button" title="降低优先级" @click="emit('move', rule.id, 1)">
+            <ArrowDown :size="14" />
+          </button>
+        </div>
+        <button type="button" class="icon-button" title="复制规则" @click="emit('duplicate', rule.id)">
+          <Copy :size="15" />
+        </button>
         <button type="button" class="icon-button" title="编辑规则" @click="emit('edit', rule)">
           <Edit3 :size="15" />
         </button>
@@ -118,6 +166,58 @@ const emit = defineEmits<{
   font-size: 11px;
 }
 
+.rule-tester {
+  display: grid;
+  padding: 10px 14px;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.rule-tester select,
+.rule-tester input {
+  min-width: 0;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.test-button {
+  display: inline-flex;
+  height: 32px;
+  padding: 0 11px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  background: var(--surface-hover);
+  color: var(--text);
+  font: inherit;
+  font-weight: 700;
+}
+
+.test-result {
+  display: flex;
+  padding: 9px 14px;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.test-result strong {
+  color: var(--accent-strong);
+}
+
+.test-result.conflict strong {
+  color: var(--danger);
+}
+
 .rules-empty strong {
   color: var(--text);
   font-size: 13px;
@@ -132,7 +232,7 @@ const emit = defineEmits<{
   display: grid;
   min-height: 66px;
   padding: 10px 14px;
-  grid-template-columns: 34px minmax(0, 1fr) 70px 30px 30px;
+  grid-template-columns: 34px minmax(0, 1fr) 70px 58px 30px 30px 30px;
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid var(--border-soft);
@@ -179,6 +279,17 @@ const emit = defineEmits<{
   font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.rule-main small {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.priority-actions {
+  display: flex;
 }
 
 .rule-response {

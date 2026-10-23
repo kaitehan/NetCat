@@ -5,6 +5,80 @@ use crate::{
     models::{MatchKind, MockRule},
 };
 
+#[derive(Debug, Clone)]
+struct RuntimeMockRule {
+    rule: MockRule,
+    regex: Option<Regex>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RuntimeMockRules {
+    rules: Vec<RuntimeMockRule>,
+}
+
+#[derive(Debug, Clone)]
+pub struct MockTestResult<'a> {
+    pub selected: Option<&'a MockRule>,
+    pub matches: Vec<&'a MockRule>,
+}
+
+impl RuntimeMockRules {
+    pub fn compile(mut rules: Vec<MockRule>) -> Result<Self, AppError> {
+        rules.sort_by(|left, right| {
+            right
+                .priority
+                .cmp(&left.priority)
+                .then_with(|| left.created_at.cmp(&right.created_at))
+        });
+        let rules = rules
+            .into_iter()
+            .map(|rule| {
+                validate_rule(&rule)?;
+                let regex = (rule.match_kind == MatchKind::Regex)
+                    .then(|| Regex::new(&rule.url_pattern))
+                    .transpose()
+                    .map_err(|error| {
+                        AppError::new("INVALID_REGEX", "URL 正则表达式无效")
+                            .with_detail(error.to_string())
+                    })?;
+                Ok(RuntimeMockRule { rule, regex })
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        Ok(Self { rules })
+    }
+
+    pub fn test(&self, method: &str, url: &str) -> MockTestResult<'_> {
+        let matches = self
+            .rules
+            .iter()
+            .filter(|runtime| runtime.rule.enabled)
+            .filter(|runtime| {
+                runtime
+                    .rule
+                    .methods
+                    .iter()
+                    .any(|candidate| candidate.eq_ignore_ascii_case(method))
+            })
+            .filter(|runtime| runtime.matches(url))
+            .map(|runtime| &runtime.rule)
+            .collect::<Vec<_>>();
+        MockTestResult {
+            selected: matches.first().copied(),
+            matches,
+        }
+    }
+}
+
+impl RuntimeMockRule {
+    fn matches(&self, url: &str) -> bool {
+        match self.rule.match_kind {
+            MatchKind::Exact => url == self.rule.url_pattern,
+            MatchKind::Contains => url.contains(&self.rule.url_pattern),
+            MatchKind::Regex => self.regex.as_ref().is_some_and(|regex| regex.is_match(url)),
+        }
+    }
+}
+
 pub fn validate_rule(rule: &MockRule) -> Result<(), AppError> {
     if rule.name.trim().is_empty() {
         return Err(AppError::new("INVALID_NAME", "Mock 名称不能为空"));

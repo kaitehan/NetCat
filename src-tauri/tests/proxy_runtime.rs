@@ -6,7 +6,8 @@ use std::{
 use netcat_lib::{
     ca::{CaManager, SecretStore},
     models::{
-        DiagnosticLog, MatchKind, MockRule, ProxyConfig, ProxyState, ReplayMode, TrafficDraft,
+        DiagnosticLog, MatchKind, MockRule, ProxyConfig, ProxyState, ReplayMode, ReplayRequest,
+        TrafficDraft, TrafficSummary,
     },
     proxy::{ProxyEventSink, ProxyService},
     storage::Store,
@@ -22,12 +23,18 @@ struct CollectingEvents {
 }
 
 impl ProxyEventSink for CollectingEvents {
-    fn traffic_created(&self, id: &str) {
-        self.traffic.lock().unwrap().push(format!("created:{id}"));
+    fn traffic_created(&self, exchange: &TrafficSummary) {
+        self.traffic
+            .lock()
+            .unwrap()
+            .push(format!("created:{}", exchange.id));
     }
 
-    fn traffic_updated(&self, id: &str) {
-        self.traffic.lock().unwrap().push(format!("updated:{id}"));
+    fn traffic_updated(&self, exchange: &TrafficSummary) {
+        self.traffic
+            .lock()
+            .unwrap()
+            .push(format!("updated:{}", exchange.id));
     }
 
     fn diagnostic_log(&self, log: &DiagnosticLog) {
@@ -58,6 +65,8 @@ fn replay_source(url: String) -> TrafficDraft {
         response_body: Vec::new(),
         content_type: None,
         mocked: false,
+        source_exchange_id: None,
+        matched_mock_rule_id: None,
         error: None,
     }
 }
@@ -105,6 +114,50 @@ async fn replay_works_while_proxy_is_stopped_and_preserves_request_body() {
     let diagnostics = events.diagnostics.lock().unwrap();
     assert_eq!(diagnostics[0].event, "replay.started");
     assert_eq!(diagnostics.last().unwrap().event, "replay.completed");
+}
+
+#[tokio::test]
+async fn edited_replay_uses_modified_request_and_links_the_source() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let upstream = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0_u8; 2048];
+        let read = socket.read(&mut request).await.unwrap();
+        let bytes = &request[..read];
+        let text = String::from_utf8_lossy(bytes);
+        assert!(text.contains("PUT /edited?mode=fast"));
+        assert!(text.to_ascii_lowercase().contains("x-edited: yes"));
+        assert!(bytes.ends_with(&[0, 1, 2, 255]));
+        socket
+            .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+    });
+    let store = Arc::new(Store::open_in_memory(5000, 1024).unwrap());
+    store
+        .insert_exchange(replay_source(format!("http://{address}/original")))
+        .unwrap();
+    let service = ProxyService::new(Arc::clone(&store));
+
+    let result = service
+        .send_replay(ReplayRequest {
+            source_exchange_id: "source".into(),
+            method: "PUT".into(),
+            url: format!("http://{address}/edited?mode=fast"),
+            headers: BTreeMap::from([("x-edited".into(), "yes".into())]),
+            body: vec![0, 1, 2, 255],
+            mode: ReplayMode::Upstream,
+        })
+        .await
+        .unwrap();
+
+    upstream.await.unwrap();
+    let saved = store.get_traffic_detail(&result.exchange_id).unwrap();
+    assert_eq!(saved.summary.source_exchange_id.as_deref(), Some("source"));
+    assert_eq!(saved.summary.method, "PUT");
+    assert_eq!(saved.request_body, vec![0, 1, 2, 255]);
 }
 
 #[tokio::test]
@@ -157,6 +210,10 @@ async fn mock_aware_replay_uses_current_rule_without_running_proxy() {
             response_body: "mocked".into(),
             delay_ms: 0,
             created_at: "2026-10-23T10:00:00Z".into(),
+            hit_count: 0,
+            last_hit_at: None,
+            last_exchange_id: None,
+            source_exchange_id: None,
         })
         .unwrap();
     let events = Arc::new(CollectingEvents::default());
@@ -212,6 +269,10 @@ async fn proxy_serves_mock_and_persists_exchange() {
             response_body: "{\"source\":\"mock\"}".into(),
             delay_ms: 0,
             created_at: "2026-10-23T10:00:00Z".into(),
+            hit_count: 0,
+            last_hit_at: None,
+            last_exchange_id: None,
+            source_exchange_id: None,
         })
         .unwrap();
     let events = Arc::new(CollectingEvents::default());
@@ -236,6 +297,16 @@ async fn proxy_serves_mock_and_persists_exchange() {
         .proxy(reqwest::Proxy::all(proxy_url).unwrap())
         .build()
         .unwrap();
+    let health = client
+        .get("http://netcat.local/__netcat/health")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(health.status(), 200);
+    assert_eq!(
+        health.text().await.unwrap(),
+        r#"{"status":"ok","service":"netcat"}"#
+    );
     let response = client
         .get("http://unresolvable.invalid/users")
         .send()
@@ -345,6 +416,10 @@ async fn https_mock_uses_a_leaf_certificate_trusted_by_the_generated_ca() {
             response_body: "{\"tls\":true}".into(),
             delay_ms: 0,
             created_at: "2026-10-23T10:00:00Z".into(),
+            hit_count: 0,
+            last_hit_at: None,
+            last_exchange_id: None,
+            source_exchange_id: None,
         })
         .unwrap();
     let service = ProxyService::new(Arc::clone(&store));

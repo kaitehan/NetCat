@@ -19,7 +19,7 @@ NetCat（奈特猫）是一款面向开发者的本地 HTTP/HTTPS 抓包与 Mock
 - HAR 1.2 导出和可执行 cURL 复制
 - 当前 macOS 网络服务的 HTTP/HTTPS 系统代理设置与恢复
 
-首版不解析 HTTP/2、QUIC、WebSocket 帧或非 HTTP TCP，不提供断点改包、弱网、脚本和 SSL Pinning 绕过。开启证书固定的应用可能无法被解密。
+当前版本不解析 HTTP/2、QUIC、WebSocket 帧或非 HTTP TCP。开启证书固定的应用可能无法被解密。
 
 ## 开发环境
 
@@ -131,3 +131,11 @@ security delete-generic-password -s com.kaitehan.netcat -a root-ca-private-key
 - 暂停捕获只停止创建新展示记录，代理转发仍继续。
 - 非法正则、Header、状态码、JSON 或延迟不会保存为运行时规则。
 - TLS 失败只提示“证书未信任或应用可能启用证书固定”，不会声称已识别具体原因。
+
+## 下一步规划
+
+- Windows 兼容：系统代理管理、Windows 证书存储、安装包和平台兼容性测试。
+- HTTP/2 完整解析、WebSocket 帧级调试，以及 QUIC / HTTP/3 支持。
+- SSL Pinning 绕过、JavaScript 脚本系统和弱网模拟。
+- 自动更新、macOS 签名与公证，以及公开分发所需的合规工作。
+- 基础断点改包仍受性能和稳定性门禁约束；若未通过 0.3.0 门禁，则作为后续版本候选，不视为 0.3.0 已交付能力。

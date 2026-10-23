@@ -1,12 +1,13 @@
 {
   "name": "netcat",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": "kaite han",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "build:budget": "npm run build && node scripts/check-bundle-size.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri": "tauri"

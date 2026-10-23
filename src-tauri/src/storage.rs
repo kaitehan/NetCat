@@ -58,6 +58,8 @@ impl Store {
                content_type TEXT,
                mocked INTEGER NOT NULL,
                truncated INTEGER NOT NULL,
+               source_exchange_id TEXT,
+               matched_mock_rule_id TEXT,
                error TEXT
              );
              CREATE INDEX IF NOT EXISTS exchanges_started_at_idx ON exchanges(started_at DESC);
@@ -67,8 +69,17 @@ impl Store {
                priority INTEGER NOT NULL,
                created_at TEXT NOT NULL
              );
-             CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+             CREATE TABLE IF NOT EXISTS mock_rule_stats(
+               rule_id TEXT PRIMARY KEY,
+               hit_count INTEGER NOT NULL DEFAULT 0,
+               last_hit_at TEXT,
+               last_exchange_id TEXT
+             );
+             CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);",
         )?;
+        ensure_column(&connection, "exchanges", "source_exchange_id", "TEXT")?;
+        ensure_column(&connection, "exchanges", "matched_mock_rule_id", "TEXT")?;
         Ok(Self {
             connection: Mutex::new(connection),
             max_entries: max_entries.max(1),
@@ -77,47 +88,62 @@ impl Store {
     }
 
     pub fn insert_exchange(&self, draft: TrafficDraft) -> Result<(), AppError> {
-        let request_original_bytes = draft.request_body.len();
-        let response_original_bytes = draft.response_body.len();
-        let request_body = truncate(draft.request_body, self.max_body_bytes);
-        let response_body = truncate(draft.response_body, self.max_body_bytes);
-        let truncated = request_body.len() < request_original_bytes
-            || response_body.len() < response_original_bytes;
-        let request_headers = serde_json::to_string(&draft.request_headers).map_err(|error| {
-            AppError::new("SERIALIZE_ERROR", "无法保存请求头").with_detail(error.to_string())
-        })?;
-        let response_headers = serde_json::to_string(&draft.response_headers).map_err(|error| {
-            AppError::new("SERIALIZE_ERROR", "无法保存响应头").with_detail(error.to_string())
-        })?;
+        self.insert_exchanges(vec![draft])
+    }
+
+    pub fn insert_exchanges(&self, drafts: Vec<TrafficDraft>) -> Result<(), AppError> {
+        if drafts.is_empty() {
+            return Ok(());
+        }
         let mut connection = self.connection.lock().expect("store mutex poisoned");
         let transaction = connection.transaction()?;
-        transaction.execute(
-            "INSERT OR REPLACE INTO exchanges(
-                id, started_at, method, url, host, status, duration_ms,
-                request_headers, response_headers, request_body, response_body,
-                request_original_bytes, response_original_bytes, content_type,
-                mocked, truncated, error
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
-            params![
-                draft.id,
-                draft.started_at,
-                draft.method,
-                draft.url,
-                draft.host,
-                draft.status,
-                draft.duration_ms.map(to_db_integer).transpose()?,
-                request_headers,
-                response_headers,
-                request_body,
-                response_body,
-                to_db_integer(request_original_bytes as u64)?,
-                to_db_integer(response_original_bytes as u64)?,
-                draft.content_type,
-                draft.mocked,
-                truncated,
-                draft.error,
-            ],
-        )?;
+        for draft in drafts {
+            let request_original_bytes = draft.request_body.len();
+            let response_original_bytes = draft.response_body.len();
+            let request_body = truncate(draft.request_body, self.max_body_bytes);
+            let response_body = truncate(draft.response_body, self.max_body_bytes);
+            let truncated = request_body.len() < request_original_bytes
+                || response_body.len() < response_original_bytes;
+            let request_headers =
+                serde_json::to_string(&draft.request_headers).map_err(|error| {
+                    AppError::new("SERIALIZE_ERROR", "无法保存请求头")
+                        .with_detail(error.to_string())
+                })?;
+            let response_headers =
+                serde_json::to_string(&draft.response_headers).map_err(|error| {
+                    AppError::new("SERIALIZE_ERROR", "无法保存响应头")
+                        .with_detail(error.to_string())
+                })?;
+            transaction.execute(
+                "INSERT OR REPLACE INTO exchanges(
+                    id, started_at, method, url, host, status, duration_ms,
+                    request_headers, response_headers, request_body, response_body,
+                    request_original_bytes, response_original_bytes, content_type,
+                    mocked, truncated, source_exchange_id, matched_mock_rule_id, error
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+                params![
+                    draft.id,
+                    draft.started_at,
+                    draft.method,
+                    draft.url,
+                    draft.host,
+                    draft.status,
+                    draft.duration_ms.map(to_db_integer).transpose()?,
+                    request_headers,
+                    response_headers,
+                    request_body,
+                    response_body,
+                    to_db_integer(request_original_bytes as u64)?,
+                    to_db_integer(response_original_bytes as u64)?,
+                    draft.content_type,
+                    draft.mocked,
+                    truncated,
+                    draft.source_exchange_id,
+                    draft.matched_mock_rule_id,
+                    draft.error,
+                ],
+            )?;
+        }
         transaction.execute(
             "DELETE FROM exchanges WHERE id IN (
                SELECT id FROM exchanges ORDER BY rowid DESC LIMIT -1 OFFSET ?1
@@ -137,7 +163,8 @@ impl Store {
         let connection = self.connection.lock().expect("store mutex poisoned");
         let mut statement = connection.prepare(
             "SELECT id, started_at, method, url, host, status, duration_ms,
-                    response_original_bytes, content_type, mocked, truncated, error
+                    response_original_bytes, content_type, mocked, truncated,
+                    source_exchange_id, matched_mock_rule_id, error
              FROM exchanges
              WHERE (?1 IS NULL OR lower(url) LIKE '%' || lower(?1) || '%' OR lower(host) LIKE '%' || lower(?1) || '%')
                AND (?2 IS NULL OR method = ?2)
@@ -170,7 +197,9 @@ impl Store {
                     content_type: row.get(8)?,
                     mocked: row.get(9)?,
                     truncated: row.get(10)?,
-                    error: row.get(11)?,
+                    source_exchange_id: row.get(11)?,
+                    matched_mock_rule_id: row.get(12)?,
+                    error: row.get(13)?,
                 })
             },
         )?;
@@ -182,23 +211,24 @@ impl Store {
         connection
             .query_row(
                 "SELECT id, started_at, method, url, host, status, duration_ms,
-                    response_original_bytes, content_type, mocked, truncated, error,
+                    response_original_bytes, content_type, mocked, truncated,
+                    source_exchange_id, matched_mock_rule_id, error,
                     request_headers, response_headers, request_body, response_body,
                     request_original_bytes
              FROM exchanges WHERE id = ?1",
                 params![id],
                 |row| {
-                    let request_headers_json: String = row.get(12)?;
-                    let response_headers_json: String = row.get(13)?;
+                    let request_headers_json: String = row.get(14)?;
+                    let response_headers_json: String = row.get(15)?;
                     let duration_ms: Option<i64> = row.get(6)?;
                     let response_original_bytes: i64 = row.get(7)?;
-                    let request_original_bytes: i64 = row.get(16)?;
+                    let request_original_bytes: i64 = row.get(18)?;
                     let request_headers =
                         serde_json::from_str(&request_headers_json).unwrap_or_default();
                     let response_headers =
                         serde_json::from_str(&response_headers_json).unwrap_or_default();
-                    let request_body: Vec<u8> = row.get(14)?;
-                    let response_body: Vec<u8> = row.get(15)?;
+                    let request_body: Vec<u8> = row.get(16)?;
+                    let response_body: Vec<u8> = row.get(17)?;
                     Ok(TrafficDetail {
                         summary: TrafficSummary {
                             id: row.get(0)?,
@@ -212,7 +242,9 @@ impl Store {
                             content_type: row.get(8)?,
                             mocked: row.get(9)?,
                             truncated: row.get(10)?,
-                            error: row.get(11)?,
+                            source_exchange_id: row.get(11)?,
+                            matched_mock_rule_id: row.get(12)?,
+                            error: row.get(13)?,
                         },
                         request_body_text: decode_body_text(&request_body, &request_headers),
                         response_body_text: decode_body_text(&response_body, &response_headers),
@@ -237,6 +269,23 @@ impl Store {
         Ok(())
     }
 
+    pub fn quick_check(&self) -> Result<String, AppError> {
+        let result = self
+            .connection
+            .lock()
+            .expect("store mutex poisoned")
+            .query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0))?;
+        if result == "ok" {
+            Ok(result)
+        } else {
+            Err(
+                AppError::new("DATABASE_INTEGRITY_ERROR", "数据库完整性检查失败")
+                    .with_detail(result)
+                    .with_action("请先备份数据库，再使用非破坏性恢复入口"),
+            )
+        }
+    }
+
     pub fn save_mock_rule(&self, rule: &MockRule) -> Result<(), AppError> {
         validate_rule(rule)?;
         let payload = serde_json::to_string(rule).map_err(|error| {
@@ -251,29 +300,68 @@ impl Store {
 
     pub fn list_mock_rules(&self) -> Result<Vec<MockRule>, AppError> {
         let connection = self.connection.lock().expect("store mutex poisoned");
-        let mut statement = connection
-            .prepare("SELECT payload FROM mock_rules ORDER BY priority DESC, created_at ASC")?;
-        let payloads = statement.query_map([], |row| row.get::<_, String>(0))?;
+        let mut statement = connection.prepare(
+            "SELECT r.payload, COALESCE(s.hit_count, 0), s.last_hit_at, s.last_exchange_id
+             FROM mock_rules r LEFT JOIN mock_rule_stats s ON s.rule_id = r.id
+             ORDER BY r.priority DESC, r.created_at ASC",
+        )?;
+        let payloads = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<String>>(3)?,
+            ))
+        })?;
         payloads
             .map(|payload| {
-                let payload = payload?;
-                serde_json::from_str(&payload).map_err(|error| {
+                let (payload, hit_count, last_hit_at, last_exchange_id) = payload?;
+                let mut rule: MockRule = serde_json::from_str(&payload).map_err(|error| {
                     rusqlite::Error::FromSqlConversionFailure(
                         payload.len(),
                         rusqlite::types::Type::Text,
                         Box::new(error),
                     )
-                })
+                })?;
+                rule.hit_count = hit_count as u64;
+                rule.last_hit_at = last_hit_at;
+                rule.last_exchange_id = last_exchange_id;
+                Ok::<MockRule, rusqlite::Error>(rule)
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(Into::into)
     }
 
     pub fn delete_mock_rule(&self, id: &str) -> Result<(), AppError> {
+        let mut connection = self.connection.lock().expect("store mutex poisoned");
+        let transaction = connection.transaction()?;
+        transaction.execute(
+            "DELETE FROM mock_rule_stats WHERE rule_id = ?1",
+            params![id],
+        )?;
+        transaction.execute("DELETE FROM mock_rules WHERE id = ?1", params![id])?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    pub fn record_mock_hit(
+        &self,
+        rule_id: &str,
+        exchange_id: &str,
+        timestamp: &str,
+    ) -> Result<(), AppError> {
         self.connection
             .lock()
             .expect("store mutex poisoned")
-            .execute("DELETE FROM mock_rules WHERE id = ?1", params![id])?;
+            .execute(
+                "INSERT INTO mock_rule_stats(rule_id, hit_count, last_hit_at, last_exchange_id)
+             VALUES (?1, 1, ?2, ?3)
+             ON CONFLICT(rule_id) DO UPDATE SET
+               hit_count = hit_count + 1,
+               last_hit_at = excluded.last_hit_at,
+               last_exchange_id = excluded.last_exchange_id",
+                params![rule_id, timestamp, exchange_id],
+            )?;
         Ok(())
     }
 
@@ -285,6 +373,40 @@ impl Store {
             .ok_or_else(|| AppError::new("NOT_FOUND", "未找到该 Mock 规则"))?;
         rule.enabled = enabled;
         self.save_mock_rule(&rule)
+    }
+
+    pub fn reorder_mock_rules(&self, ordered_ids: &[String]) -> Result<(), AppError> {
+        let rules = self.list_mock_rules()?;
+        if ordered_ids.len() != rules.len()
+            || !ordered_ids
+                .iter()
+                .all(|id| rules.iter().any(|rule| &rule.id == id))
+        {
+            return Err(AppError::new(
+                "INVALID_MOCK_ORDER",
+                "Mock 排序必须包含全部现有规则",
+            ));
+        }
+        let mut connection = self.connection.lock().expect("store mutex poisoned");
+        let transaction = connection.transaction()?;
+        for (index, id) in ordered_ids.iter().enumerate() {
+            let mut rule = rules
+                .iter()
+                .find(|rule| &rule.id == id)
+                .cloned()
+                .expect("validated rule id");
+            rule.priority = (ordered_ids.len() - index) as i64;
+            let payload = serde_json::to_string(&rule).map_err(|error| {
+                AppError::new("SERIALIZE_ERROR", "无法保存 Mock 排序")
+                    .with_detail(error.to_string())
+            })?;
+            transaction.execute(
+                "UPDATE mock_rules SET payload = ?1, priority = ?2 WHERE id = ?3",
+                params![payload, rule.priority, id],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn list_all_details(&self) -> Result<Vec<TrafficDetail>, AppError> {
@@ -334,6 +456,25 @@ impl Store {
             .execute("DELETE FROM app_settings WHERE key = ?1", params![key])?;
         Ok(())
     }
+}
+
+fn ensure_column(
+    connection: &Connection,
+    table: &str,
+    column: &str,
+    column_type: &str,
+) -> Result<(), AppError> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if !columns.iter().any(|name| name == column) {
+        connection.execute(
+            &format!("ALTER TABLE {table} ADD COLUMN {column} {column_type}"),
+            [],
+        )?;
+    }
+    Ok(())
 }
 
 fn truncate(mut body: Vec<u8>, limit: usize) -> Vec<u8> {

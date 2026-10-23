@@ -1,6 +1,7 @@
 mod app;
 mod body;
 pub mod ca;
+pub mod diagnostics;
 pub mod error;
 pub mod export;
 pub mod migration;

@@ -73,6 +73,16 @@ describe('DiagnosticPanel', () => {
     expect(screen.queryByText('代理已启动')).not.toBeInTheDocument()
     expect(screen.getByText('请求重发失败')).toBeVisible()
 
+    await fireEvent.update(screen.getByRole('combobox', { name: '日志级别' }), 'ALL')
+    await fireEvent.update(screen.getByRole('combobox', { name: '日志范围' }), 'replay')
+    expect(screen.queryByText('代理已启动')).not.toBeInTheDocument()
+    expect(screen.getByText('请求重发失败')).toBeVisible()
+
+    await fireEvent.update(screen.getByRole('combobox', { name: '日志范围' }), 'ALL')
+    await fireEvent.update(screen.getByRole('searchbox', { name: '搜索日志' }), 'proxy.started')
+    expect(screen.getByText('代理已启动')).toBeVisible()
+    expect(screen.queryByText('请求重发失败')).not.toBeInTheDocument()
+
     await fireEvent.click(screen.getByRole('button', { name: '清空日志' }))
     expect(emitted().clearLogs).toHaveLength(1)
   })

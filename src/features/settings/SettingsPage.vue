@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bug, Info, Laptop, Pause, Radio, Router, Settings2, ShieldCheck } from '@lucide/vue'
+import { Bug, Download, Info, Laptop, Pause, Radio, Router, Settings2, ShieldCheck } from '@lucide/vue'
 import { shallowRef } from 'vue'
 import { APP_BRAND } from '../../shared/brand'
 import type { CaStatus, ProxyStatus } from '../../shared/types'
@@ -33,6 +33,7 @@ const emit = defineEmits<{
   generateCa: []
   exportCa: []
   openDiagnostics: []
+  exportDiagnostics: []
 }>()
 
 const activeTab = shallowRef<'proxy' | 'certificate' | 'system'>('proxy')
@@ -111,7 +112,6 @@ function updatePort(event: Event) {
             @change="updatePort"
           />
         </div>
-
         <div class="setting-row">
           <div>
             <label for="allow-lan">局域网接入</label>
@@ -218,6 +218,21 @@ function updatePort(event: Event) {
           >
             <Bug :size="14" />
             打开调试面板
+          </button>
+        </div>
+        <div class="setting-row">
+          <div>
+            <span class="setting-label">诊断包</span>
+            <p>导出版本、代理、CA 公钥状态、数据库检查和脱敏日志。</p>
+          </div>
+          <button
+            type="button"
+            class="debug-button"
+            :disabled="busy"
+            @click="emit('exportDiagnostics')"
+          >
+            <Download :size="14" />
+            导出诊断包
           </button>
         </div>
       </section>

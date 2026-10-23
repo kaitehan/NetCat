@@ -136,6 +136,30 @@ pub struct MockRule {
     pub response_body: String,
     pub delay_ms: u64,
     pub created_at: String,
+    #[serde(default)]
+    pub hit_count: u64,
+    #[serde(default)]
+    pub last_hit_at: Option<String>,
+    #[serde(default)]
+    pub last_exchange_id: Option<String>,
+    #[serde(default)]
+    pub source_exchange_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MockRuleMatch {
+    pub rule_id: String,
+    pub name: String,
+    pub priority: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MockRuleTestResult {
+    pub matches: Vec<MockRuleMatch>,
+    pub selected_rule_id: Option<String>,
+    pub conflict: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -153,6 +177,8 @@ pub struct TrafficDraft {
     pub response_body: Vec<u8>,
     pub content_type: Option<String>,
     pub mocked: bool,
+    pub source_exchange_id: Option<String>,
+    pub matched_mock_rule_id: Option<String>,
     pub error: Option<String>,
 }
 
@@ -170,6 +196,8 @@ pub struct TrafficSummary {
     pub content_type: Option<String>,
     pub mocked: bool,
     pub truncated: bool,
+    pub source_exchange_id: Option<String>,
+    pub matched_mock_rule_id: Option<String>,
     pub error: Option<String>,
 }
 
@@ -206,6 +234,30 @@ pub enum TrafficCopyKind {
 pub enum ReplayMode {
     Upstream,
     MockAware,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplayRequest {
+    pub source_exchange_id: String,
+    pub method: String,
+    pub url: String,
+    pub headers: BTreeMap<String, String>,
+    pub body: Vec<u8>,
+    pub mode: ReplayMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReplayDraft {
+    pub source_exchange_id: String,
+    pub method: String,
+    pub url: String,
+    pub headers: BTreeMap<String, String>,
+    pub body: Vec<u8>,
+    pub body_text: Option<String>,
+    pub content_type: Option<String>,
+    pub binary: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

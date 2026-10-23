@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::hint::black_box;
+use std::time::Instant;
 
 use netcat_lib::{
     export::{build_curl, build_exchange_copy, build_har},
@@ -6,7 +8,8 @@ use netcat_lib::{
         DiagnosticLevel, DiagnosticLog, DiagnosticScope, MatchKind, MockRule, ProxyConfig,
         ProxyStatus, TrafficCopyKind, TrafficDraft,
     },
-    rules::{select_mock, validate_rule},
+    proxy::parse_lsof_listener,
+    rules::{select_mock, validate_rule, RuntimeMockRules},
     storage::Store,
 };
 
@@ -56,6 +59,8 @@ fn draft(index: usize, response_body: Vec<u8>) -> TrafficDraft {
         response_body,
         content_type: Some("application/octet-stream".into()),
         mocked: false,
+        source_exchange_id: None,
+        matched_mock_rule_id: None,
         error: None,
     }
 }
@@ -127,6 +132,10 @@ fn rule(id: &str, priority: i64, kind: MatchKind, pattern: &str) -> MockRule {
         response_body: "{}".into(),
         delay_ms: 0,
         created_at: "2026-10-23T10:00:00Z".into(),
+        hit_count: 0,
+        last_hit_at: None,
+        last_exchange_id: None,
+        source_exchange_id: None,
     }
 }
 
@@ -137,6 +146,83 @@ fn mock_selection_uses_priority_then_creation_order() {
     let rules = [low, high];
     let selected = select_mock(&rules, "GET", "https://api.test/users/42").unwrap();
     assert_eq!(selected.id, "high");
+}
+
+#[test]
+fn runtime_mock_rules_return_ordered_candidates_and_selected_rule() {
+    let low = rule("low", 1, MatchKind::Contains, "/users");
+    let high = rule("high", 10, MatchKind::Regex, r"/users/\d+$");
+    let runtime = RuntimeMockRules::compile(vec![low, high]).unwrap();
+
+    let result = runtime.test("GET", "https://api.test/users/42");
+
+    assert_eq!(result.selected.unwrap().id, "high");
+    assert_eq!(
+        result
+            .matches
+            .iter()
+            .map(|rule| rule.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["high", "low"]
+    );
+}
+
+#[test]
+#[ignore = "performance acceptance benchmark"]
+fn compiled_matcher_is_at_least_five_times_faster_than_request_time_compilation() {
+    let rules = (0..20)
+        .map(|index| {
+            rule(
+                &format!("rule-{index}"),
+                index,
+                MatchKind::Regex,
+                r"/users/\d+$",
+            )
+        })
+        .collect::<Vec<_>>();
+    let runtime = RuntimeMockRules::compile(rules.clone()).unwrap();
+    let method = "GET";
+    let url = "https://api.test/users/42";
+    let iterations = 250;
+
+    let optimized_started = Instant::now();
+    for _ in 0..iterations {
+        black_box(runtime.test(method, url));
+    }
+    let optimized = optimized_started.elapsed();
+
+    let baseline_started = Instant::now();
+    for _ in 0..iterations {
+        black_box(select_mock(&rules, method, url));
+    }
+    let baseline = baseline_started.elapsed();
+
+    eprintln!("matcher baseline={baseline:?}, optimized={optimized:?}");
+    assert!(
+        baseline.as_nanos() >= optimized.as_nanos() * 5,
+        "compiled matcher improved only {:.2}x",
+        baseline.as_secs_f64() / optimized.as_secs_f64()
+    );
+}
+
+#[test]
+fn store_preserves_replay_and_mock_links() {
+    let store = Store::open_in_memory(10, 1024).unwrap();
+    let mut exchange = draft(1, b"ok".to_vec());
+    exchange.source_exchange_id = Some("source-1".into());
+    exchange.matched_mock_rule_id = Some("mock-1".into());
+
+    store.insert_exchange(exchange).unwrap();
+    let detail = store.get_traffic_detail("traffic-1").unwrap();
+
+    assert_eq!(
+        detail.summary.source_exchange_id.as_deref(),
+        Some("source-1")
+    );
+    assert_eq!(
+        detail.summary.matched_mock_rule_id.as_deref(),
+        Some("mock-1")
+    );
 }
 
 #[test]
@@ -176,6 +262,21 @@ fn store_keeps_only_the_newest_rows() {
 }
 
 #[test]
+fn database_quick_check_reports_a_healthy_store() {
+    let store = Store::open_in_memory(10, 1024).unwrap();
+    assert_eq!(store.quick_check().unwrap(), "ok");
+}
+
+#[test]
+fn port_diagnostics_extract_process_and_pid_from_lsof() {
+    let output = "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nnode 4312 dev 21u IPv4 0x0 0t0 TCP *:28086 (LISTEN)\n";
+    assert_eq!(
+        parse_lsof_listener(output).as_deref(),
+        Some("node (PID 4312)")
+    );
+}
+
+#[test]
 fn store_toggles_mock_rule_and_lists_all_details() {
     let store = Store::open_in_memory(10, 1024).unwrap();
     let enabled = rule("enabled", 1, MatchKind::Contains, "/users");
@@ -187,6 +288,23 @@ fn store_toggles_mock_rule_and_lists_all_details() {
     let details = store.list_all_details().unwrap();
     assert_eq!(details.len(), 1);
     assert_eq!(details[0].summary.id, "traffic-1");
+}
+
+#[test]
+fn mock_hit_statistics_survive_rule_edits() {
+    let store = Store::open_in_memory(10, 1024).unwrap();
+    let mut saved = rule("stats", 1, MatchKind::Contains, "/users");
+    store.save_mock_rule(&saved).unwrap();
+    store
+        .record_mock_hit("stats", "exchange-1", "2026-10-23T10:30:00Z")
+        .unwrap();
+    saved.name = "edited".into();
+    store.save_mock_rule(&saved).unwrap();
+
+    let loaded = store.list_mock_rules().unwrap().remove(0);
+    assert_eq!(loaded.hit_count, 1);
+    assert_eq!(loaded.last_hit_at.as_deref(), Some("2026-10-23T10:30:00Z"));
+    assert_eq!(loaded.last_exchange_id.as_deref(), Some("exchange-1"));
 }
 
 #[test]

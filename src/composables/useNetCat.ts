@@ -5,15 +5,19 @@ import type {
   CaStatus,
   DiagnosticLog,
   MockRule,
+  MockRuleTestResult,
   ProxyConfig,
   ProxyStatus,
+  ReplayDraft,
   ReplayMode,
+  ReplayRequest,
   ReplayResult,
   TrafficCopyKind,
   TrafficDetail,
   TrafficSummary
 } from '../shared/types'
 import { createEventBatcher } from './event-batcher'
+import { applyTrafficUpdates } from './traffic-updater'
 import {
   appendDiagnosticLog,
   installDebugBridge,
@@ -44,7 +48,9 @@ export function useNetCat() {
   const diagnosticLogs = shallowRef<readonly DiagnosticLog[]>([])
   const unlisteners: Array<() => void> = []
   const removeDebugBridge = installDebugBridge(api)
-  const trafficEvents = createEventBatcher(reloadTraffic, 75)
+  const trafficEvents = createEventBatcher<TrafficSummary>((updates) => {
+    traffic.value = applyTrafficUpdates(traffic.value, updates, 500)
+  }, 75, (row) => row.id)
 
   const isRunning = computed(() => proxyStatus.value.state === 'running')
 
@@ -69,8 +75,8 @@ export function useNetCat() {
       unlisteners.push(await api.listen<ProxyStatus>('proxy-status-changed', (payload) => {
         proxyStatus.value = payload
       }))
-      unlisteners.push(await api.listen<string>('traffic-created', trafficEvents.schedule))
-      unlisteners.push(await api.listen<string>('traffic-updated', trafficEvents.schedule))
+      unlisteners.push(await api.listen<TrafficSummary>('traffic-created', trafficEvents.schedule))
+      unlisteners.push(await api.listen<TrafficSummary>('traffic-updated', trafficEvents.schedule))
       unlisteners.push(await api.listen<AppError>('storage-warning', (payload) => {
         error.value = payload
       }))
@@ -175,6 +181,41 @@ export function useNetCat() {
     }
   }
 
+  async function getReplayDraft(id: string): Promise<ReplayDraft | null> {
+    if (!api.getReplayDraft) {
+      error.value = {
+        code: 'REPLAY_UNAVAILABLE',
+        message: '当前环境不支持编辑并重发'
+      }
+      return null
+    }
+    try {
+      return await api.getReplayDraft(id)
+    } catch (cause) {
+      error.value = normalizeDesktopError(cause)
+      return null
+    }
+  }
+
+  async function sendReplay(request: ReplayRequest): Promise<ReplayResult | null> {
+    if (!api.sendReplay) {
+      return replayExchange(request.sourceExchangeId, request.mode)
+    }
+    busy.value = true
+    error.value = null
+    try {
+      const result = await api.sendReplay(request)
+      traffic.value = applyTrafficUpdates(traffic.value, [result.exchange], 500)
+      selectedDetail.value = await api.getTrafficDetail(result.exchangeId)
+      return result
+    } catch (cause) {
+      error.value = normalizeDesktopError(cause)
+      return null
+    } finally {
+      busy.value = false
+    }
+  }
+
   async function clearTraffic() {
     await runAction(async () => {
       await api.clearTraffic()
@@ -202,6 +243,39 @@ export function useNetCat() {
       await api.setMockEnabled(id, enabled)
       mockRules.value = await api.listMockRules()
     })
+  }
+
+  async function duplicateMock(id: string) {
+    if (!api.duplicateMockRule) {
+      return
+    }
+    await runAction(async () => {
+      await api.duplicateMockRule!(id)
+      mockRules.value = await api.listMockRules()
+    })
+  }
+
+  async function reorderMocks(orderedIds: readonly string[]) {
+    if (!api.reorderMockRules) {
+      return
+    }
+    await runAction(async () => {
+      await api.reorderMockRules!(orderedIds)
+      mockRules.value = await api.listMockRules()
+    })
+  }
+
+  async function testMocks(method: string, url: string): Promise<MockRuleTestResult | null> {
+    if (!api.testMockRules) {
+      return null
+    }
+    try {
+      error.value = null
+      return await api.testMockRules(method, url)
+    } catch (cause) {
+      error.value = normalizeDesktopError(cause)
+      return null
+    }
   }
 
   async function generateCa() {
@@ -283,10 +357,15 @@ export function useNetCat() {
     clearSelection,
     copyExchange,
     replayExchange,
+    getReplayDraft,
+    sendReplay,
     clearTraffic,
     saveMock,
     deleteMock,
     setMockEnabled,
+    duplicateMock,
+    reorderMocks,
+    testMocks,
     generateCa,
     acceptDisclaimer,
     openDevtools,

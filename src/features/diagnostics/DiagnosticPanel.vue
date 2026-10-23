@@ -4,6 +4,7 @@ import { CircleAlert, CircleCheck, CircleX, Network, Terminal, Trash2, X } from 
 import type {
   DiagnosticLevel,
   DiagnosticLog,
+  DiagnosticScope,
   DiagnosticTrafficDetail,
   TrafficSummary
 } from '../../shared/types'
@@ -28,16 +29,35 @@ const emit = defineEmits<{
 
 type PanelTab = 'console' | 'network'
 type LevelFilter = 'ALL' | DiagnosticLevel
+type ScopeFilter = 'ALL' | DiagnosticScope
 
 const activeTab = shallowRef<PanelTab>('console')
 const levelFilter = shallowRef<LevelFilter>('ALL')
+const scopeFilter = shallowRef<ScopeFilter>('ALL')
+const keywordFilter = shallowRef('')
 const selectedTrafficId = shallowRef<string | null>(null)
 const resizing = shallowRef(false)
 const panelWidth = shallowRef(clampWidth(Math.round(window.innerWidth * 0.45)))
 
-const filteredLogs = computed(() => levelFilter.value === 'ALL'
-  ? logs
-  : logs.filter((log) => log.level === levelFilter.value))
+const filteredLogs = computed(() => {
+  const keyword = keywordFilter.value.trim().toLocaleLowerCase()
+  return logs.filter((log) => {
+    if (levelFilter.value !== 'ALL' && log.level !== levelFilter.value) {
+      return false
+    }
+    if (scopeFilter.value !== 'ALL' && log.scope !== scopeFilter.value) {
+      return false
+    }
+    if (!keyword) {
+      return true
+    }
+    const searchable = [log.message, log.event, log.exchangeId, JSON.stringify(log.details ?? {})]
+      .filter(Boolean)
+      .join(' ')
+      .toLocaleLowerCase()
+    return searchable.includes(keyword)
+  })
+})
 const panelStyle = computed(() => ({ width: `${panelWidth.value}px` }))
 const requestHeaderLines = computed(() => detail ? formatHeaders(detail.requestHeaders) : [])
 const responseHeaderLines = computed(() => detail ? formatHeaders(detail.responseHeaders) : [])
@@ -152,6 +172,23 @@ function stopResize() {
             <option value="error">错误</option>
           </select>
         </label>
+        <label>
+          <span>范围</span>
+          <select v-model="scopeFilter" aria-label="日志范围">
+            <option value="ALL">全部</option>
+            <option value="proxy">代理</option>
+            <option value="mock">Mock</option>
+            <option value="replay">重发</option>
+            <option value="system">系统</option>
+          </select>
+        </label>
+        <input
+          v-model="keywordFilter"
+          class="log-search"
+          type="search"
+          aria-label="搜索日志"
+          placeholder="关键词"
+        />
         <span class="toolbar-count">{{ filteredLogs.length }} 条</span>
         <button type="button" class="toolbar-button" aria-label="清空日志" @click="emit('clearLogs')">
           <Trash2 :size="13" />
@@ -385,6 +422,17 @@ function stopResize() {
   color: #d8dee9;
   font: inherit;
   font-size: 10px;
+}
+
+.log-search {
+  width: min(180px, 28%);
+  height: 26px;
+  padding: 0 8px;
+  border: 1px solid #3a414c;
+  border-radius: 4px;
+  background: #111419;
+  color: #d8dee9;
+  font: inherit;
 }
 
 .toolbar-count {

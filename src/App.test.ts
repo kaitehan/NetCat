@@ -289,8 +289,8 @@ describe('App', () => {
     )
 
     await fireEvent.click(screen.getByRole('button', { name: '设置' }))
-    await fireEvent.click(screen.getByRole('tab', { name: '系统配置' }))
-    await fireEvent.click(screen.getByRole('button', { name: '打开调试面板' }))
+    await fireEvent.click(await screen.findByRole('tab', { name: '系统配置' }))
+    await fireEvent.click(await screen.findByRole('button', { name: '打开调试面板' }))
     expect(await screen.findByRole('complementary', { name: '调试面板' })).toBeVisible()
     expect(screen.getByRole('tab', { name: 'Console' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('Mock 响应生成失败')).toBeVisible()

@@ -22,7 +22,7 @@ use hudsucker::{
 };
 use tokio::{
     net::TcpListener,
-    sync::{oneshot, Mutex},
+    sync::{mpsc, oneshot, Mutex},
     task::JoinHandle,
 };
 
@@ -31,18 +31,19 @@ use crate::{
     export::filtered_request_headers,
     models::{
         DiagnosticLevel, DiagnosticLog, DiagnosticScope, MockRule, ProxyConfig, ProxyState,
-        ProxyStatus, ReplayMode, ReplayResult, TrafficDraft,
+        ProxyStatus, ReplayMode, ReplayRequest, ReplayResult, TrafficDraft, TrafficSummary,
     },
-    rules::select_mock,
+    rules::RuntimeMockRules,
     storage::Store,
 };
 
 pub const CA_DOWNLOAD_PATH: &str = "/__netcat/ca.crt";
+pub const HEALTH_PATH: &str = "/__netcat/health";
 
 pub trait ProxyEventSink: Send + Sync + 'static {
     fn status_changed(&self, _status: &ProxyStatus) {}
-    fn traffic_created(&self, _id: &str) {}
-    fn traffic_updated(&self, _id: &str) {}
+    fn traffic_created(&self, _exchange: &TrafficSummary) {}
+    fn traffic_updated(&self, _exchange: &TrafficSummary) {}
     fn storage_warning(&self, _error: &AppError) {}
     fn diagnostic_log(&self, _log: &DiagnosticLog) {}
 }
@@ -54,7 +55,7 @@ impl ProxyEventSink for NoopEventSink {}
 
 pub struct ProxyService {
     store: Arc<Store>,
-    rules: Arc<RwLock<Vec<MockRule>>>,
+    rules: Arc<RwLock<RuntimeMockRules>>,
     capture_enabled: Arc<AtomicBool>,
     status: RwLock<ProxyStatus>,
     shutdown: Mutex<Option<oneshot::Sender<()>>>,
@@ -70,7 +71,7 @@ impl ProxyService {
     pub fn with_event_sink(store: Arc<Store>, event_sink: Arc<dyn ProxyEventSink>) -> Self {
         Self {
             store,
-            rules: Arc::new(RwLock::new(Vec::new())),
+            rules: Arc::new(RwLock::new(RuntimeMockRules::default())),
             capture_enabled: Arc::new(AtomicBool::new(true)),
             status: RwLock::new(ProxyStatus::default()),
             shutdown: Mutex::new(None),
@@ -91,8 +92,29 @@ impl ProxyService {
     }
 
     pub fn refresh_rules(&self) -> Result<(), AppError> {
-        *self.rules.write().expect("proxy rules lock poisoned") = self.store.list_mock_rules()?;
+        *self.rules.write().expect("proxy rules lock poisoned") =
+            RuntimeMockRules::compile(self.store.list_mock_rules()?)?;
         Ok(())
+    }
+
+    fn queue_mock_hit(&self, rule_id: String, exchange_id: String) {
+        let store = Arc::clone(&self.store);
+        let event_sink = Arc::clone(&self.event_sink);
+        let timestamp = Utc::now().to_rfc3339();
+        tokio::spawn(async move {
+            match tokio::task::spawn_blocking(move || {
+                store.record_mock_hit(&rule_id, &exchange_id, &timestamp)
+            })
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => event_sink.storage_warning(&error),
+                Err(error) => event_sink.storage_warning(
+                    &AppError::new("STORAGE_TASK_ERROR", "Mock 命中统计写入任务异常")
+                        .with_detail(error.to_string()),
+                ),
+            }
+        });
     }
 
     pub async fn replay(
@@ -100,6 +122,19 @@ impl ProxyService {
         exchange_id: &str,
         mode: ReplayMode,
     ) -> Result<ReplayResult, AppError> {
+        let original = self.store.get_traffic_detail(exchange_id)?;
+        self.send_replay(ReplayRequest {
+            source_exchange_id: exchange_id.to_string(),
+            method: original.summary.method,
+            url: original.summary.url,
+            headers: original.request_headers,
+            body: original.request_body,
+            mode,
+        })
+        .await
+    }
+
+    pub async fn send_replay(&self, request: ReplayRequest) -> Result<ReplayResult, AppError> {
         self.event_sink.diagnostic_log(
             &DiagnosticLog::new(
                 DiagnosticLevel::Info,
@@ -107,18 +142,18 @@ impl ProxyService {
                 "replay.started",
                 "开始重新发送请求",
             )
-            .with_exchange_id(exchange_id)
-            .with_detail("mode", replay_mode_name(mode)),
+            .with_exchange_id(&request.source_exchange_id)
+            .with_detail("mode", replay_mode_name(request.mode)),
         );
-        let original = self.store.get_traffic_detail(exchange_id)?;
+        let original = self.store.get_traffic_detail(&request.source_exchange_id)?;
         if original.summary.method.eq_ignore_ascii_case("CONNECT") {
             return Err(
                 AppError::new("REPLAY_UNSUPPORTED_METHOD", "CONNECT 请求不能重新发送")
                     .with_action("请选择普通 HTTP 或 HTTPS 请求"),
             );
         }
-        let parsed_url = url::Url::parse(&original.summary.url).map_err(|error| {
-            AppError::new("REPLAY_INVALID_URL", "原请求 URL 无效").with_detail(error.to_string())
+        let parsed_url = url::Url::parse(&request.url).map_err(|error| {
+            AppError::new("REPLAY_INVALID_URL", "请求 URL 无效").with_detail(error.to_string())
         })?;
         if !matches!(parsed_url.scheme(), "http" | "https") {
             return Err(AppError::new(
@@ -139,25 +174,35 @@ impl ProxyService {
         let base = TrafficDraft {
             id: id.clone(),
             started_at: started_at.clone(),
-            method: original.summary.method.clone(),
-            url: original.summary.url.clone(),
+            method: request.method,
+            url: request.url,
             host: parsed_url.host_str().unwrap_or_default().to_string(),
             status: None,
             duration_ms: None,
-            request_headers: original.request_headers.clone(),
+            request_headers: request.headers,
             response_headers: BTreeMap::new(),
-            request_body: original.request_body.clone(),
+            request_body: request.body,
             response_body: Vec::new(),
             content_type: None,
             mocked: false,
+            source_exchange_id: Some(request.source_exchange_id),
+            matched_mock_rule_id: None,
             error: None,
         };
         self.store.insert_exchange(base.clone())?;
-        self.event_sink.traffic_created(&id);
+        self.event_sink
+            .traffic_created(&self.store.get_traffic_detail(&id)?.summary);
 
-        if mode == ReplayMode::MockAware {
-            let rules = self.store.list_mock_rules()?;
-            if let Some(rule) = select_mock(&rules, &base.method, &base.url).cloned() {
+        if request.mode == ReplayMode::MockAware {
+            self.refresh_rules()?;
+            let rule = self
+                .rules
+                .read()
+                .expect("proxy rules lock poisoned")
+                .test(&base.method, &base.url)
+                .selected
+                .cloned();
+            if let Some(rule) = rule {
                 self.event_sink.diagnostic_log(
                     &DiagnosticLog::new(
                         DiagnosticLevel::Info,
@@ -195,8 +240,11 @@ impl ProxyService {
                 completed.response_body = rule.response_body.into_bytes();
                 completed.content_type = completed.response_headers.get("content-type").cloned();
                 completed.mocked = true;
+                completed.matched_mock_rule_id = Some(rule.id.clone());
+                self.queue_mock_hit(rule.id.clone(), id.clone());
                 self.store.insert_exchange(completed)?;
-                self.event_sink.traffic_updated(&id);
+                self.event_sink
+                    .traffic_updated(&self.store.get_traffic_detail(&id)?.summary);
                 return self.replay_result(&id, true);
             }
         }
@@ -245,7 +293,8 @@ impl ProxyService {
                         failed.content_type = content_type;
                         failed.error = Some(error.to_string());
                         self.store.insert_exchange(failed)?;
-                        self.event_sink.traffic_updated(&id);
+                        self.event_sink
+                            .traffic_updated(&self.store.get_traffic_detail(&id)?.summary);
                         let app_error =
                             AppError::new("REPLAY_RESPONSE_ERROR", "无法读取重发响应正文")
                                 .with_detail(error.to_string())
@@ -261,7 +310,8 @@ impl ProxyService {
                 completed.response_body = body;
                 completed.content_type = content_type;
                 self.store.insert_exchange(completed)?;
-                self.event_sink.traffic_updated(&id);
+                self.event_sink
+                    .traffic_updated(&self.store.get_traffic_detail(&id)?.summary);
                 self.replay_result(&id, false)
             }
             Err(error) => {
@@ -269,7 +319,8 @@ impl ProxyService {
                 failed.duration_ms = Some(started.elapsed().as_millis() as u64);
                 failed.error = Some(error.to_string());
                 self.store.insert_exchange(failed)?;
-                self.event_sink.traffic_updated(&id);
+                self.event_sink
+                    .traffic_updated(&self.store.get_traffic_detail(&id)?.summary);
                 let app_error = AppError::new(
                     if error.is_timeout() {
                         "REPLAY_TIMEOUT"
@@ -362,6 +413,7 @@ impl ProxyService {
         let listener = TcpListener::bind(SocketAddr::from((bind_ip, config.port)))
             .await
             .map_err(|error| {
+                let occupant = port_occupant(config.port);
                 self.fail_status(config.port, error.to_string());
                 self.event_sink.diagnostic_log(
                     &DiagnosticLog::new(
@@ -373,15 +425,24 @@ impl ProxyService {
                     .with_detail("port", config.port)
                     .with_detail("errorCode", "PORT_UNAVAILABLE"),
                 );
+                let detail = occupant
+                    .as_ref()
+                    .map(|process| format!("{error}; 占用进程: {process}"))
+                    .unwrap_or_else(|| error.to_string());
+                let action = occupant
+                    .map(|process| format!("请退出 {process} 或更换代理端口"))
+                    .unwrap_or_else(|| "请更换端口或关闭占用该端口的程序".to_string());
                 AppError::new("PORT_UNAVAILABLE", format!("无法监听端口 {}", config.port))
-                    .with_detail(error.to_string())
-                    .with_action("请更换端口或关闭占用该端口的程序")
+                    .with_detail(detail)
+                    .with_action(action)
             })?;
         let address = listener.local_addr().map_err(|error| {
             AppError::new("PROXY_START_ERROR", "无法读取代理监听地址")
                 .with_detail(error.to_string())
         })?;
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let persistence =
+            spawn_persistence_writer(Arc::clone(&self.store), Arc::clone(&self.event_sink));
         let handler = CaptureHandler {
             store: Arc::clone(&self.store),
             rules: Arc::clone(&self.rules),
@@ -389,6 +450,7 @@ impl ProxyService {
             allow_lan: config.allow_lan,
             certificate_pem: Arc::new(certificate_pem),
             event_sink: Arc::clone(&self.event_sink),
+            persistence,
             pending: None,
         };
         let authority = RcgenAuthority::new(issuer, 1_000, aws_lc_rs::default_provider());
@@ -500,11 +562,12 @@ struct PendingExchange {
 
 struct CaptureHandler {
     store: Arc<Store>,
-    rules: Arc<RwLock<Vec<MockRule>>>,
+    rules: Arc<RwLock<RuntimeMockRules>>,
     capture_enabled: Arc<AtomicBool>,
     allow_lan: bool,
     certificate_pem: Arc<Vec<u8>>,
     event_sink: Arc<dyn ProxyEventSink>,
+    persistence: mpsc::Sender<PersistenceJob>,
     pending: Option<PendingExchange>,
 }
 
@@ -517,6 +580,7 @@ impl Clone for CaptureHandler {
             allow_lan: self.allow_lan,
             certificate_pem: Arc::clone(&self.certificate_pem),
             event_sink: Arc::clone(&self.event_sink),
+            persistence: self.persistence.clone(),
             pending: None,
         }
     }
@@ -530,6 +594,19 @@ impl HttpHandler for CaptureHandler {
     ) -> RequestOrResponse {
         if self.allow_lan && !is_private_client(context.client_addr.ip()) {
             return simple_response(StatusCode::FORBIDDEN, "仅允许同一私有网络中的设备连接").into();
+        }
+        if request.uri().path() == HEALTH_PATH {
+            let body = r#"{"status":"ok","service":"netcat"}"#;
+            let mut response = Response::new(Body::from(body));
+            *response.status_mut() = StatusCode::OK;
+            response
+                .headers_mut()
+                .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            response.headers_mut().insert(
+                CONTENT_LENGTH,
+                HeaderValue::from_str(&body.len().to_string()).expect("valid length"),
+            );
+            return response.into();
         }
         if request.uri().path() == CA_DOWNLOAD_PATH {
             let mut response = Response::new(Body::from(self.certificate_pem.as_ref().clone()));
@@ -585,7 +662,7 @@ impl HttpHandler for CaptureHandler {
         };
         if self.capture_enabled.load(Ordering::Relaxed) {
             pending.initial_persistence = Some(persist_exchange(
-                Arc::clone(&self.store),
+                self.persistence.clone(),
                 Arc::clone(&self.event_sink),
                 pending.initial_draft(),
                 PersistenceEvent::Created,
@@ -593,10 +670,15 @@ impl HttpHandler for CaptureHandler {
         }
         let request = Request::from_parts(parts, Body::from(request_body));
         let selected_rule = {
-            let rules = self.rules.read().expect("proxy rules lock poisoned");
-            select_mock(&rules, &method, &url).cloned()
+            self.rules
+                .read()
+                .expect("proxy rules lock poisoned")
+                .test(&method, &url)
+                .selected
+                .cloned()
         };
         if let Some(rule) = selected_rule {
+            self.queue_mock_hit(rule.id.clone(), pending.id.clone());
             self.event_sink.diagnostic_log(
                 &DiagnosticLog::new(
                     DiagnosticLevel::Info,
@@ -620,6 +702,7 @@ impl HttpHandler for CaptureHandler {
                         &response,
                         rule.response_body.as_bytes().to_vec(),
                         true,
+                        Some(rule.id.clone()),
                         None,
                     );
                     return response.into();
@@ -655,7 +738,7 @@ impl HttpHandler for CaptureHandler {
                 let bytes = body.to_bytes().to_vec();
                 let response = Response::from_parts(parts, Body::from(bytes.clone()));
                 if let Some(pending) = self.pending.take() {
-                    self.record(pending, &response, bytes, false, None);
+                    self.record(pending, &response, bytes, false, None, None);
                 }
                 response
             }
@@ -667,6 +750,7 @@ impl HttpHandler for CaptureHandler {
                         &response,
                         Vec::new(),
                         false,
+                        None,
                         Some(error.to_string()),
                     );
                     response
@@ -698,6 +782,7 @@ impl HttpHandler for CaptureHandler {
                 &response,
                 Vec::new(),
                 false,
+                None,
                 Some(error.to_string()),
             );
         }
@@ -719,6 +804,7 @@ impl CaptureHandler {
         response: &Response<Body>,
         response_body: Vec<u8>,
         mocked: bool,
+        matched_mock_rule_id: Option<String>,
         error: Option<String>,
     ) {
         let Some(initial_persistence) = pending.initial_persistence else {
@@ -729,7 +815,6 @@ impl CaptureHandler {
             .get(CONTENT_TYPE)
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
-        let id = pending.id.clone();
         let draft = TrafficDraft {
             id: pending.id,
             started_at: pending.started_at,
@@ -744,13 +829,36 @@ impl CaptureHandler {
             response_body,
             content_type,
             mocked,
+            source_exchange_id: None,
+            matched_mock_rule_id,
             error,
         };
-        let store = Arc::clone(&self.store);
+        let persistence = self.persistence.clone();
         let event_sink = Arc::clone(&self.event_sink);
         tokio::spawn(async move {
             let _ = initial_persistence.await;
-            write_exchange(store, event_sink, draft, id, PersistenceEvent::Updated).await;
+            let _ =
+                persist_exchange(persistence, event_sink, draft, PersistenceEvent::Updated).await;
+        });
+    }
+
+    fn queue_mock_hit(&self, rule_id: String, exchange_id: String) {
+        let store = Arc::clone(&self.store);
+        let event_sink = Arc::clone(&self.event_sink);
+        let timestamp = Utc::now().to_rfc3339();
+        tokio::spawn(async move {
+            match tokio::task::spawn_blocking(move || {
+                store.record_mock_hit(&rule_id, &exchange_id, &timestamp)
+            })
+            .await
+            {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => event_sink.storage_warning(&error),
+                Err(error) => event_sink.storage_warning(
+                    &AppError::new("STORAGE_TASK_ERROR", "Mock 命中统计写入任务异常")
+                        .with_detail(error.to_string()),
+                ),
+            }
         });
     }
 }
@@ -771,6 +879,8 @@ impl PendingExchange {
             response_body: Vec::new(),
             content_type: None,
             mocked: false,
+            source_exchange_id: None,
+            matched_mock_rule_id: None,
             error: None,
         }
     }
@@ -782,33 +892,100 @@ enum PersistenceEvent {
     Updated,
 }
 
-fn persist_exchange(
+struct PersistenceJob {
+    draft: TrafficDraft,
+    id: String,
+    event: PersistenceEvent,
+    completed: oneshot::Sender<()>,
+}
+
+const PERSISTENCE_QUEUE_CAPACITY: usize = 1_000;
+const PERSISTENCE_BATCH_SIZE: usize = 50;
+const PERSISTENCE_BATCH_DELAY: Duration = Duration::from_millis(25);
+
+fn spawn_persistence_writer(
     store: Arc<Store>,
+    event_sink: Arc<dyn ProxyEventSink>,
+) -> mpsc::Sender<PersistenceJob> {
+    let (sender, mut receiver) = mpsc::channel::<PersistenceJob>(PERSISTENCE_QUEUE_CAPACITY);
+    tokio::spawn(async move {
+        while let Some(first) = receiver.recv().await {
+            let mut jobs = vec![first];
+            let deadline = tokio::time::Instant::now() + PERSISTENCE_BATCH_DELAY;
+            while jobs.len() < PERSISTENCE_BATCH_SIZE {
+                match tokio::time::timeout_at(deadline, receiver.recv()).await {
+                    Ok(Some(job)) => jobs.push(job),
+                    _ => break,
+                }
+            }
+            let drafts = jobs.iter().map(|job| job.draft.clone()).collect();
+            let write_store = Arc::clone(&store);
+            match tokio::task::spawn_blocking(move || write_store.insert_exchanges(drafts)).await {
+                Ok(Ok(())) => {
+                    for job in jobs {
+                        match store.get_traffic_detail(&job.id) {
+                            Ok(detail) => match job.event {
+                                PersistenceEvent::Created => {
+                                    event_sink.traffic_created(&detail.summary)
+                                }
+                                PersistenceEvent::Updated => {
+                                    event_sink.traffic_updated(&detail.summary)
+                                }
+                            },
+                            Err(error) => event_sink.storage_warning(&error),
+                        }
+                        let _ = job.completed.send(());
+                    }
+                }
+                Ok(Err(error)) => {
+                    event_sink.storage_warning(&error);
+                    for job in jobs {
+                        let _ = job.completed.send(());
+                    }
+                }
+                Err(error) => {
+                    event_sink.storage_warning(
+                        &AppError::new("STORAGE_TASK_ERROR", "流量批量写入任务异常")
+                            .with_detail(error.to_string()),
+                    );
+                    for job in jobs {
+                        let _ = job.completed.send(());
+                    }
+                }
+            }
+        }
+    });
+    sender
+}
+
+fn persist_exchange(
+    sender: mpsc::Sender<PersistenceJob>,
     event_sink: Arc<dyn ProxyEventSink>,
     draft: TrafficDraft,
     event: PersistenceEvent,
 ) -> JoinHandle<()> {
     let id = draft.id.clone();
-    tokio::spawn(write_exchange(store, event_sink, draft, id, event))
-}
-
-async fn write_exchange(
-    store: Arc<Store>,
-    event_sink: Arc<dyn ProxyEventSink>,
-    draft: TrafficDraft,
-    id: String,
-    event: PersistenceEvent,
-) {
-    match tokio::task::spawn_blocking(move || store.insert_exchange(draft)).await {
-        Ok(Ok(())) => match event {
-            PersistenceEvent::Created => event_sink.traffic_created(&id),
-            PersistenceEvent::Updated => event_sink.traffic_updated(&id),
-        },
-        Ok(Err(error)) => event_sink.storage_warning(&error),
-        Err(error) => event_sink.storage_warning(
-            &AppError::new("STORAGE_TASK_ERROR", "流量写入任务异常").with_detail(error.to_string()),
-        ),
+    let (completed, receiver) = oneshot::channel();
+    let job = PersistenceJob {
+        draft,
+        id,
+        event,
+        completed,
+    };
+    if let Err(error) = sender.try_send(job) {
+        let reason = match error {
+            mpsc::error::TrySendError::Full(_) => "数据库写入队列已满，当前记录未保存",
+            mpsc::error::TrySendError::Closed(_) => "数据库写入器已停止，当前记录未保存",
+        };
+        event_sink.storage_warning(
+            &AppError::new("STORAGE_QUEUE_UNAVAILABLE", reason)
+                .with_action("代理转发将继续，请检查诊断日志"),
+        );
+        return tokio::spawn(async {});
     }
+    tokio::spawn(async move {
+        let _ = receiver.await;
+    })
 }
 
 fn simple_response(status: StatusCode, message: &str) -> Response<Body> {
@@ -817,6 +994,29 @@ fn simple_response(status: StatusCode, message: &str) -> Response<Body> {
         .header(CONTENT_TYPE, "text/plain; charset=utf-8")
         .body(Body::from(message.to_string()))
         .expect("static response is valid")
+}
+
+fn port_occupant(port: u16) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("/usr/sbin/lsof")
+            .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN"])
+            .output()
+            .ok()?;
+        parse_lsof_listener(&String::from_utf8_lossy(&output.stdout))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = port;
+        None
+    }
+}
+
+pub fn parse_lsof_listener(output: &str) -> Option<String> {
+    let mut lines = output.lines();
+    lines.next()?;
+    let columns = lines.next()?.split_whitespace().collect::<Vec<_>>();
+    (columns.len() >= 2).then(|| format!("{} (PID {})", columns[0], columns[1]))
 }
 
 fn headers_to_map(headers: &hudsucker::hyper::HeaderMap) -> BTreeMap<String, String> {

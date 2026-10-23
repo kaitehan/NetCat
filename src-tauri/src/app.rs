@@ -5,15 +5,17 @@ use tauri::{Emitter, Manager, State};
 
 use crate::{
     ca::{CaManager, KeychainSecretStore, SecretStore},
+    diagnostics::build_diagnostic_archive,
     error::AppError,
     export::{build_exchange_copy as create_exchange_copy, build_har},
     migration::migrate_legacy_macos_database,
     models::{
-        CaStatus, DiagnosticLevel, DiagnosticLog, DiagnosticScope, MockRule, ProxyConfig,
-        ProxyStatus, ReplayMode, ReplayResult, TrafficCopyKind, TrafficDetail, TrafficFilter,
-        TrafficSummary,
+        CaStatus, DiagnosticLevel, DiagnosticLog, DiagnosticScope, MockRule, MockRuleMatch,
+        MockRuleTestResult, ProxyConfig, ProxyStatus, ReplayDraft, ReplayMode, ReplayRequest,
+        ReplayResult, TrafficCopyKind, TrafficDetail, TrafficFilter, TrafficSummary,
     },
     proxy::{ProxyEventSink, ProxyService},
+    rules::RuntimeMockRules,
     storage::Store,
     system_proxy::SystemProxyManager,
 };
@@ -34,12 +36,12 @@ impl ProxyEventSink for TauriEventSink {
         let _ = self.0.emit("proxy-status-changed", status);
     }
 
-    fn traffic_created(&self, id: &str) {
-        let _ = self.0.emit("traffic-created", id);
+    fn traffic_created(&self, exchange: &TrafficSummary) {
+        let _ = self.0.emit("traffic-created", exchange);
     }
 
-    fn traffic_updated(&self, id: &str) {
-        let _ = self.0.emit("traffic-updated", id);
+    fn traffic_updated(&self, exchange: &TrafficSummary) {
+        let _ = self.0.emit("traffic-updated", exchange);
     }
 
     fn storage_warning(&self, error: &AppError) {
@@ -240,6 +242,40 @@ fn clear_traffic(state: State<'_, AppState>) -> Result<(), AppError> {
 }
 
 #[tauri::command]
+fn check_database_integrity(state: State<'_, AppState>) -> Result<String, AppError> {
+    state.store.quick_check()
+}
+
+#[tauri::command]
+fn export_diagnostic_bundle(
+    state: State<'_, AppState>,
+    destination: String,
+    logs: Vec<DiagnosticLog>,
+) -> Result<(), AppError> {
+    let macos_version = std::process::Command::new("/usr/bin/sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let ca = state.ca.status()?;
+    let metadata = serde_json::json!({
+        "application": { "name": "NetCat", "version": env!("CARGO_PKG_VERSION") },
+        "macOS": macos_version,
+        "proxy": state.proxy.status(),
+        "systemProxyManaged": state.system_proxy.is_managed()?,
+        "ca": { "generated": ca.generated, "fingerprint": ca.fingerprint },
+        "databaseQuickCheck": state.store.quick_check()?,
+        "generatedAt": Utc::now().to_rfc3339(),
+    });
+    let archive = build_diagnostic_archive(metadata, &logs)?;
+    std::fs::write(destination, archive).map_err(|error| {
+        AppError::new("DIAGNOSTIC_EXPORT_ERROR", "无法写入诊断包").with_detail(error.to_string())
+    })
+}
+
+#[tauri::command]
 fn list_mock_rules(state: State<'_, AppState>) -> Result<Vec<MockRule>, AppError> {
     state.store.list_mock_rules()
 }
@@ -270,6 +306,65 @@ fn set_mock_enabled(state: State<'_, AppState>, id: String, enabled: bool) -> Re
 }
 
 #[tauri::command]
+fn duplicate_mock_rule(state: State<'_, AppState>, id: String) -> Result<MockRule, AppError> {
+    let mut rule = state
+        .store
+        .list_mock_rules()?
+        .into_iter()
+        .find(|rule| rule.id == id)
+        .ok_or_else(|| AppError::new("NOT_FOUND", "未找到该 Mock 规则"))?;
+    rule.id = uuid::Uuid::new_v4().to_string();
+    rule.name = format!("{} 副本", rule.name);
+    rule.created_at = Utc::now().to_rfc3339();
+    rule.priority += 1;
+    rule.hit_count = 0;
+    rule.last_hit_at = None;
+    rule.last_exchange_id = None;
+    state.store.save_mock_rule(&rule)?;
+    state.proxy.refresh_rules()?;
+    Ok(rule)
+}
+
+#[tauri::command]
+fn reorder_mock_rules(
+    state: State<'_, AppState>,
+    ordered_ids: Vec<String>,
+) -> Result<(), AppError> {
+    state.store.reorder_mock_rules(&ordered_ids)?;
+    state.proxy.refresh_rules()
+}
+
+#[tauri::command]
+fn test_mock_rules(
+    state: State<'_, AppState>,
+    method: String,
+    url: String,
+) -> Result<MockRuleTestResult, AppError> {
+    let parsed = url::Url::parse(&url).map_err(|error| {
+        AppError::new("INVALID_URL", "测试 URL 无效").with_detail(error.to_string())
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(AppError::new("INVALID_URL", "仅支持 HTTP/HTTPS URL"));
+    }
+    let runtime = RuntimeMockRules::compile(state.store.list_mock_rules()?)?;
+    let result = runtime.test(&method, &url);
+    let matches = result
+        .matches
+        .iter()
+        .map(|rule| MockRuleMatch {
+            rule_id: rule.id.clone(),
+            name: rule.name.clone(),
+            priority: rule.priority,
+        })
+        .collect::<Vec<_>>();
+    Ok(MockRuleTestResult {
+        selected_rule_id: result.selected.map(|rule| rule.id.clone()),
+        conflict: matches.len() > 1,
+        matches,
+    })
+}
+
+#[tauri::command]
 fn export_har(state: State<'_, AppState>, destination: String) -> Result<(), AppError> {
     let har = build_har(&state.store.list_all_details()?)?;
     let body = serde_json::to_vec_pretty(&har).map_err(|error| {
@@ -297,6 +392,59 @@ async fn replay_exchange(
     mode: ReplayMode,
 ) -> Result<ReplayResult, AppError> {
     state.proxy.replay(&exchange_id, mode).await
+}
+
+#[tauri::command]
+fn get_replay_draft(
+    state: State<'_, AppState>,
+    exchange_id: String,
+) -> Result<ReplayDraft, AppError> {
+    let detail = state.store.get_traffic_detail(&exchange_id)?;
+    if detail.summary.method.eq_ignore_ascii_case("CONNECT") {
+        return Err(AppError::new(
+            "REPLAY_UNSUPPORTED_METHOD",
+            "CONNECT 请求不能重新发送",
+        ));
+    }
+    if detail.request_body.len() as u64 != detail.request_original_bytes {
+        return Err(AppError::new(
+            "REPLAY_TRUNCATED_BODY",
+            "请求正文不完整，不能重新发送",
+        ));
+    }
+    let parsed = url::Url::parse(&detail.summary.url).map_err(|error| {
+        AppError::new("REPLAY_INVALID_URL", "请求 URL 无效").with_detail(error.to_string())
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(AppError::new(
+            "REPLAY_UNSUPPORTED_URL",
+            "仅支持重新发送 HTTP/HTTPS 请求",
+        ));
+    }
+    let binary = !detail.request_body.is_empty() && detail.request_body_text.is_none();
+    let content_type = detail
+        .request_headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+        .map(|(_, value)| value.clone());
+    Ok(ReplayDraft {
+        source_exchange_id: exchange_id,
+        method: detail.summary.method,
+        url: detail.summary.url,
+        headers: detail.request_headers,
+        body: detail.request_body,
+        body_text: detail.request_body_text,
+        content_type,
+        binary,
+    })
+}
+
+#[tauri::command]
+async fn send_replay(
+    state: State<'_, AppState>,
+    request: ReplayRequest,
+) -> Result<ReplayResult, AppError> {
+    state.proxy.send_replay(request).await
 }
 
 #[tauri::command]
@@ -373,13 +521,20 @@ pub fn run() {
             list_traffic,
             get_traffic_detail,
             clear_traffic,
+            check_database_integrity,
+            export_diagnostic_bundle,
             list_mock_rules,
             save_mock_rule,
             delete_mock_rule,
             set_mock_enabled,
+            duplicate_mock_rule,
+            reorder_mock_rules,
+            test_mock_rules,
             export_har,
             build_exchange_copy,
             replay_exchange,
+            get_replay_draft,
+            send_replay,
             has_accepted_disclaimer,
             accept_disclaimer,
             open_devtools,

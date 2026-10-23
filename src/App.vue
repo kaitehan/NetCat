@@ -1,16 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, shallowRef } from 'vue'
+import { computed, defineAsyncComponent, onMounted, reactive, shallowRef } from 'vue'
 import { Search, X } from '@lucide/vue'
 import AppSidebar from './components/AppSidebar.vue'
 import FilterSelect from './components/FilterSelect.vue'
 import TopToolbar from './components/TopToolbar.vue'
-import MockEditor from './features/mock/MockEditor.vue'
-import MockRulesPanel from './features/mock/MockRulesPanel.vue'
 import DisclaimerDialog from './features/onboarding/DisclaimerDialog.vue'
-import SettingsPage from './features/settings/SettingsPage.vue'
-import DiagnosticPanel from './features/diagnostics/DiagnosticPanel.vue'
 import { sanitizeTrafficDetail } from './features/diagnostics/debug-bridge'
-import TrafficInspector from './features/traffic/TrafficInspector.vue'
 import TrafficContextMenu, { type TrafficMenuAction } from './features/traffic/TrafficContextMenu.vue'
 import TrafficTable from './features/traffic/TrafficTable.vue'
 import { filterTraffic } from './features/traffic/traffic-filter'
@@ -18,18 +13,32 @@ import { useNetCat } from './composables/useNetCat'
 import type {
   DiagnosticTrafficDetail,
   MockRule,
+  MockRuleTestResult,
   ReplayMode,
+  ReplayDraft,
+  ReplayRequest,
   TrafficCopyKind,
   TrafficDetail,
   TrafficFilter,
   TrafficSummary
 } from './shared/types'
 
+const MockEditor = defineAsyncComponent(() => import('./features/mock/MockEditor.vue'))
+const MockRulesPanel = defineAsyncComponent(() => import('./features/mock/MockRulesPanel.vue'))
+const SettingsPage = defineAsyncComponent(() => import('./features/settings/SettingsPage.vue'))
+const DiagnosticPanel = defineAsyncComponent(() => import('./features/diagnostics/DiagnosticPanel.vue'))
+const TrafficInspector = defineAsyncComponent(() => import('./features/traffic/TrafficInspector.vue'))
+const ReplayEditor = defineAsyncComponent(() => import('./features/replay/ReplayEditor.vue'))
+
 const capture = useNetCat()
 const activeView = shallowRef<'traffic' | 'mocks' | 'settings'>('traffic')
 const mockEditorOpen = shallowRef(false)
+const replayEditorOpen = shallowRef(false)
+const replayDraft = shallowRef<ReplayDraft | null>(null)
+const replayMode = shallowRef<ReplayMode>('upstream')
 const editingRule = shallowRef<MockRule | null>(null)
 const mockInitialFocus = shallowRef<'headers' | 'body' | null>(null)
+const mockTestResult = shallowRef<MockRuleTestResult | null>(null)
 const toast = shallowRef<string | null>(null)
 const hiddenUrls = shallowRef<ReadonlySet<string>>(new Set())
 const hiddenHosts = shallowRef<ReadonlySet<string>>(new Set())
@@ -215,7 +224,8 @@ function createMockDraft(detail: TrafficDetail, focus: 'headers' | 'body') {
     responseHeaders,
     responseBody: detail.responseBodyText ?? '',
     delayMs: 0,
-    createdAt: ''
+    createdAt: '',
+    sourceExchangeId: detail.id
   }, focus)
 }
 
@@ -234,10 +244,11 @@ async function handleTrafficAction(action: TrafficMenuAction) {
   } else if (action === 'hide:host') {
     hideTraffic('host', row.host)
   } else if (action.startsWith('replay:')) {
-    const mode: ReplayMode = action === 'replay:upstream' ? 'upstream' : 'mockAware'
-    const result = await capture.replayExchange(row.id, mode)
-    if (result) {
-      toast.value = result.mocked ? '已重新发送并命中 Mock' : '已重新发送到真实上游'
+    replayMode.value = action === 'replay:upstream' ? 'upstream' : 'mockAware'
+    const draft = await capture.getReplayDraft(row.id)
+    if (draft) {
+      replayDraft.value = draft
+      replayEditorOpen.value = true
     }
   } else {
     const detail = contextDetail.value ?? await capture.getTrafficDetail(row.id)
@@ -248,12 +259,36 @@ async function handleTrafficAction(action: TrafficMenuAction) {
   closeTrafficMenu()
 }
 
+async function sendReplay(request: ReplayRequest) {
+  const result = await capture.sendReplay(request)
+  if (result) {
+    replayEditorOpen.value = false
+    replayDraft.value = null
+    toast.value = result.mocked ? '已重新发送并命中 Mock' : '已重新发送到真实上游'
+  }
+}
+
 async function saveMock(rule: MockRule) {
   await capture.saveMock(rule)
   if (!capture.error.value) {
     mockEditorOpen.value = false
     toast.value = 'Mock 规则已保存'
   }
+}
+
+async function moveMock(id: string, direction: -1 | 1) {
+  const orderedIds = capture.mockRules.value.map((rule) => rule.id)
+  const index = orderedIds.indexOf(id)
+  const target = index + direction
+  if (index < 0 || target < 0 || target >= orderedIds.length) {
+    return
+  }
+  ;[orderedIds[index], orderedIds[target]] = [orderedIds[target], orderedIds[index]]
+  await capture.reorderMocks(orderedIds)
+}
+
+async function testMocks(payload: { method: string; url: string }) {
+  mockTestResult.value = await capture.testMocks(payload.method, payload.url)
 }
 
 async function exportHar() {
@@ -269,6 +304,13 @@ async function copyCurl(id: string) {
 async function exportCa() {
   await capture.api.exportCa()
   toast.value = '证书已导出'
+}
+
+async function exportDiagnostics() {
+  if (capture.api.exportDiagnosticBundle) {
+    await capture.api.exportDiagnosticBundle(capture.diagnosticLogs.value)
+    toast.value = '诊断包已导出'
+  }
 }
 
 async function selectDiagnosticTraffic(id: string) {
@@ -341,10 +383,14 @@ onMounted(() => void capture.initialize())
         <MockRulesPanel
           v-else-if="activeView === 'mocks'"
           :rules="capture.mockRules.value"
+          :test-result="mockTestResult"
           @add="openMockEditor(null)"
           @edit="openMockEditor"
           @toggle="capture.setMockEnabled"
           @delete="capture.deleteMock"
+          @duplicate="capture.duplicateMock"
+          @move="moveMock"
+          @test="testMocks"
         />
         <SettingsPage
           v-else
@@ -363,6 +409,7 @@ onMounted(() => void capture.initialize())
           @generate-ca="capture.generateCa"
           @export-ca="exportCa"
           @open-diagnostics="diagnosticsOpen = true"
+          @export-diagnostics="exportDiagnostics"
         />
       </main>
 
@@ -391,6 +438,15 @@ onMounted(() => void capture.initialize())
 
     <div v-if="mockEditorOpen" class="drawer-backdrop" @click.self="mockEditorOpen = false">
       <MockEditor :rule="editingRule" :initial-focus="mockInitialFocus" @save="saveMock" @cancel="mockEditorOpen = false" />
+    </div>
+
+    <div v-if="replayEditorOpen && replayDraft" class="drawer-backdrop" @click.self="replayEditorOpen = false">
+      <ReplayEditor
+        :draft="replayDraft"
+        :initial-mode="replayMode"
+        @send="sendReplay"
+        @cancel="replayEditorOpen = false"
+      />
     </div>
 
     <DisclaimerDialog

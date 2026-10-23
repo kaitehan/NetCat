@@ -39,6 +39,8 @@ fn detail() -> TrafficDetail {
             content_type: Some("application/json".into()),
             mocked: true,
             truncated: false,
+            source_exchange_id: None,
+            matched_mock_rule_id: None,
             error: None,
         },
         request_headers: BTreeMap::new(),
@@ -108,6 +110,10 @@ async fn mock_response_normalizes_transport_headers() {
         response_body: "{\"ok\":true}".into(),
         delay_ms: 0,
         created_at: "2026-10-23T10:00:00Z".into(),
+        hit_count: 0,
+        last_hit_at: None,
+        last_exchange_id: None,
+        source_exchange_id: None,
     };
 
     let response = build_mock_response(&rule).unwrap();

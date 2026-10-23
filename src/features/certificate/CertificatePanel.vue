@@ -25,6 +25,7 @@ const certificateUrl = computed(() => {
   }
   return `http://${proxyStatus.lanIp}:${proxyStatus.port}/__netcat/ca.crt`
 })
+const healthUrl = computed(() => certificateUrl.value?.replace('/__netcat/ca.crt', '/__netcat/health') ?? null)
 </script>
 
 <template>
@@ -89,12 +90,14 @@ const certificateUrl = computed(() => {
               </div>
               <code>{{ certificateUrl }}</code>
             </div>
+            <p>代理连通性自检：<code class="inline-code">{{ healthUrl }}</code></p>
           </template>
           <p v-else>启动代理并开启“局域网”，这里会显示手机证书下载地址。</p>
           <ol>
-            <li>iOS 安装描述文件后，还需在“证书信任设置”中开启完全信任。</li>
-            <li>Android 7+ 应用可能默认不信任用户 CA，需由被测应用显式允许。</li>
-            <li>启用 SSL Pinning 的应用无法解密，本工具不会绕过该保护。</li>
+            <li>CA 地址无法下载：先访问连通性自检地址，确认代理和局域网配置。</li>
+            <li>CA 已下载但 HTTPS 仍失败：iOS 需在“证书信任设置”中开启完全信任。</li>
+            <li>TLS 握手失败：Android 7+ 应用可能不信任用户 CA，需由被测应用显式允许。</li>
+            <li>浏览器正常但特定应用失败：该应用可能启用了证书固定，本工具不会绕过该保护。</li>
           </ol>
         </section>
       </div>
@@ -234,6 +237,11 @@ const certificateUrl = computed(() => {
   background: var(--surface-raised);
   color: var(--accent-strong);
   font-size: 10px;
+}
+
+.instruction-section .inline-code {
+  display: inline;
+  padding: 2px 4px;
 }
 
 .certificate-download {

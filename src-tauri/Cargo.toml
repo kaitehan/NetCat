@@ -1,6 +1,6 @@
 [package]
 name = "netcat"
-version = "0.2.0"
+version = "0.3.0"
 description = "Local HTTP/HTTPS capture and mock proxy"
 authors = ["kaite han"]
 edition = "2021"
@@ -43,6 +43,7 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"
 tracing = "0.1"
 url = "2.5"
 uuid = { version = "1.11", features = ["v4", "serde"] }
+zip = { version = "2.4", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3.15"
