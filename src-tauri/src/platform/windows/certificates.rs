@@ -5,6 +5,10 @@ use crate::{
     platform::{certificate_der, CertificateTrust, CertificateTrustState},
 };
 
+// The documented string form of CERT_STORE_PROV_SYSTEM_REGISTRY_W. Unlike "System",
+// this opens the user's physical registry store without inherited sibling stores.
+const ROOT_STORE_PROVIDER: &[u8] = b"SystemRegistry\0";
+
 /// The external certificate-store boundary; implementations return complete DER certificates.
 pub trait CertificateStoreApi: Send + Sync {
     fn certificates(&self) -> Result<Vec<Vec<u8>>, AppError>;
@@ -116,23 +120,23 @@ mod native {
     use std::{mem, ptr, slice};
 
     use windows::{
-        core::w,
+        core::{w, PCSTR},
         Win32::{
             Foundation::{GetLastError, CRYPT_E_NOT_FOUND},
             Security::Cryptography::{
                 CertAddEncodedCertificateToStore, CertCloseStore, CertDeleteCertificateFromStore,
                 CertDuplicateCertificateContext, CertEnumCertificatesInStore,
                 CertFreeCertificateContext, CertOpenStore, CERT_CONTEXT, CERT_OPEN_STORE_FLAGS,
-                CERT_STORE_ADD_NEW, CERT_STORE_OPEN_EXISTING_FLAG, CERT_STORE_PROV_SYSTEM_W,
-                CERT_STORE_READONLY_FLAG, CERT_SYSTEM_STORE_CURRENT_USER, HCERTSTORE,
-                X509_ASN_ENCODING,
+                CERT_STORE_ADD_NEW, CERT_STORE_OPEN_EXISTING_FLAG, CERT_STORE_READONLY_FLAG,
+                CERT_SYSTEM_STORE_CURRENT_USER, HCERTSTORE, X509_ASN_ENCODING,
             },
         },
     };
 
     use super::*;
 
-    /// Each operation opens only CurrentUser\\Root, and retains no native handles between calls.
+    /// Each operation opens only the current user's physical registry Root store.
+    /// No native handles are retained between calls.
     pub struct CurrentUserRootStore;
 
     struct Store(HCERTSTORE);
@@ -144,10 +148,11 @@ mod native {
             if read_only {
                 flags |= CERT_STORE_READONLY_FLAG;
             }
-            // ROOT is a static, NUL-terminated UTF-16 name; no LocalMachine flag is used.
+            // Both provider and ROOT are static, NUL-terminated names. SystemRegistry
+            // with CURRENT_USER excludes inherited stores from queries and mutations.
             unsafe {
                 CertOpenStore(
-                    CERT_STORE_PROV_SYSTEM_W,
+                    PCSTR(ROOT_STORE_PROVIDER.as_ptr()),
                     X509_ASN_ENCODING,
                     None,
                     flags,
@@ -319,6 +324,87 @@ mod tests {
                 .retain(|stored| stored != der);
             Ok(())
         }
+    }
+
+    // Models the difference between a logical system collection and the user's physical Root.
+    // The provider is the same argument that production passes to CertOpenStore.
+    struct LayeredRootStore {
+        user: MemoryCertificateStore,
+        inherited: MemoryCertificateStore,
+    }
+
+    impl LayeredRootStore {
+        fn includes_inherited(&self) -> bool {
+            match super::ROOT_STORE_PROVIDER {
+                b"System\0" => true,
+                b"SystemRegistry\0" => false,
+                _ => panic!("unsupported simulated certificate-store provider"),
+            }
+        }
+    }
+
+    impl CertificateStoreApi for LayeredRootStore {
+        fn certificates(&self) -> Result<Vec<Vec<u8>>, AppError> {
+            let mut certificates = self.user.contents();
+            if self.includes_inherited() {
+                certificates.extend(self.inherited.contents());
+            }
+            Ok(certificates)
+        }
+
+        fn add(&self, der: &[u8]) -> Result<(), AppError> {
+            self.user.add(der)
+        }
+
+        fn remove(&self, der: &[u8]) -> Result<(), AppError> {
+            self.user.remove(der)?;
+            if self.includes_inherited() {
+                self.inherited.remove(der)?;
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn inherited_identical_der_does_not_skip_explicit_user_installation() {
+        let user = MemoryCertificateStore::default();
+        let inherited = MemoryCertificateStore::with_certificates(&[b"A"]);
+        let trust = WindowsCertificateTrust::new(LayeredRootStore {
+            user: user.clone(),
+            inherited: inherited.clone(),
+        });
+
+        assert_eq!(
+            trust.status(PEM_A, HASH_A).unwrap(),
+            CertificateTrustState::NotTrusted
+        );
+        assert_eq!(
+            trust.install(PEM_A, HASH_A).unwrap(),
+            CertificateTrustState::Trusted
+        );
+        assert_eq!(user.contents(), vec![b"A".to_vec()]);
+        assert_eq!(inherited.contents(), vec![b"A".to_vec()]);
+    }
+
+    #[test]
+    fn removal_preserves_inherited_identical_der_with_or_without_a_user_copy() {
+        let user = MemoryCertificateStore::with_certificates(&[b"A", b"B"]);
+        let inherited = MemoryCertificateStore::with_certificates(&[b"A"]);
+        let trust = WindowsCertificateTrust::new(LayeredRootStore {
+            user: user.clone(),
+            inherited: inherited.clone(),
+        });
+
+        assert_eq!(
+            trust.remove(PEM_A, HASH_A).unwrap(),
+            CertificateTrustState::NotTrusted
+        );
+        assert_eq!(
+            trust.remove(PEM_A, HASH_A).unwrap(),
+            CertificateTrustState::NotTrusted
+        );
+        assert_eq!(user.contents(), vec![b"B".to_vec()]);
+        assert_eq!(inherited.contents(), vec![b"A".to_vec()]);
     }
 
     #[test]
