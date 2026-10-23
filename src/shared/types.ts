@@ -40,6 +40,35 @@ export interface TrafficDetail extends TrafficSummary {
   responseOriginalBytes: number
 }
 
+export type DiagnosticLevel = 'info' | 'warn' | 'error'
+
+export type DiagnosticScope = 'proxy' | 'mock' | 'replay' | 'system'
+
+export interface DiagnosticLog {
+  timestamp: string
+  level: DiagnosticLevel
+  scope: DiagnosticScope
+  event: string
+  message: string
+  exchangeId?: string
+  details?: Readonly<Record<string, unknown>>
+}
+
+export type DiagnosticTrafficSummary = TrafficSummary
+
+export interface DiagnosticTrafficDetail extends TrafficSummary {
+  requestHeaders: Readonly<Record<string, string>>
+  responseHeaders: Readonly<Record<string, string>>
+  requestOriginalBytes: number
+  responseOriginalBytes: number
+}
+
+export interface NetCaptureDebug {
+  status(): Promise<ProxyStatus>
+  recent(limit?: number): Promise<DiagnosticTrafficSummary[]>
+  get(exchangeId: string): Promise<DiagnosticTrafficDetail>
+}
+
 export type TrafficCopyKind =
   | 'url'
   | 'curl'

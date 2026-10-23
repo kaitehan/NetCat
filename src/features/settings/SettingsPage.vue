@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Laptop, Pause, Radio, Router, ShieldCheck } from '@lucide/vue'
+import { Bug, Laptop, Pause, Radio, Router, Settings2, ShieldCheck } from '@lucide/vue'
 import { shallowRef } from 'vue'
 import type { CaStatus, ProxyStatus } from '../../shared/types'
 import CertificatePanel from '../certificate/CertificatePanel.vue'
@@ -31,9 +31,10 @@ const emit = defineEmits<{
   updateSystemProxy: [value: boolean]
   generateCa: []
   exportCa: []
+  openDiagnostics: []
 }>()
 
-const activeTab = shallowRef<'proxy' | 'certificate'>('proxy')
+const activeTab = shallowRef<'proxy' | 'certificate' | 'system'>('proxy')
 
 function updatePort(event: Event) {
   const value = Number((event.target as HTMLInputElement).value)
@@ -70,6 +71,16 @@ function updatePort(event: Event) {
         >
           <ShieldCheck :size="14" />
           证书配置
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === 'system'"
+          :tabindex="activeTab === 'system' ? 0 : -1"
+          @click="activeTab = 'system'"
+        >
+          <Settings2 :size="14" />
+          系统配置
         </button>
       </div>
     </header>
@@ -171,7 +182,7 @@ function updatePort(event: Event) {
       </div>
     </div>
 
-    <div v-else class="certificate-content" role="tabpanel">
+    <div v-else-if="activeTab === 'certificate'" class="certificate-content" role="tabpanel">
       <CertificatePanel
         embedded
         :ca-status="caStatus"
@@ -181,6 +192,34 @@ function updatePort(event: Event) {
         @generate="emit('generateCa')"
         @export="emit('exportCa')"
       />
+    </div>
+
+    <div v-else class="settings-content" role="tabpanel">
+      <section class="settings-section">
+        <div class="section-heading">
+          <Bug :size="17" />
+          <div>
+            <h2>调试工具</h2>
+            <p>查看代理、Mock 与请求重发的实时运行日志。</p>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <span class="setting-label">应用调试面板</span>
+            <p>在应用右侧查看实时诊断日志和本地网络请求。</p>
+          </div>
+          <button
+            type="button"
+            class="debug-button"
+            :disabled="busy"
+            @click="emit('openDiagnostics')"
+          >
+            <Bug :size="14" />
+            打开调试面板
+          </button>
+        </div>
+      </section>
     </div>
   </section>
 </template>
@@ -294,6 +333,32 @@ function updatePort(event: Event) {
   color: var(--text);
   font-size: 11px;
   font-weight: 600;
+}
+
+.setting-label {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.debug-button {
+  display: inline-flex;
+  height: 32px;
+  padding: 0 12px;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--accent-strong);
+  border-radius: var(--radius-control);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.debug-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .setting-row p {

@@ -16,7 +16,12 @@ import type {
   TrafficSummary
 } from '../shared/types'
 
-export type DesktopEvent = 'proxy-status-changed' | 'traffic-created' | 'traffic-updated' | 'storage-warning'
+export type DesktopEvent =
+  | 'proxy-status-changed'
+  | 'traffic-created'
+  | 'traffic-updated'
+  | 'storage-warning'
+  | 'diagnostic-log'
 
 export interface DesktopApi {
   getProxyStatus(): Promise<ProxyStatus>
@@ -42,6 +47,7 @@ export interface DesktopApi {
   replayExchange(id: string, mode: ReplayMode): Promise<ReplayResult>
   hasAcceptedDisclaimer(): Promise<boolean>
   acceptDisclaimer(): Promise<void>
+  openDevtools(): Promise<void>
   listen<T>(event: DesktopEvent, handler: (payload: T) => void): Promise<UnlistenFn>
 }
 
@@ -254,6 +260,13 @@ const browserApi: DesktopApi = {
   async acceptDisclaimer() {
     localStorage.setItem('netcapture-disclaimer', 'accepted')
   },
+  async openDevtools() {
+    throw {
+      code: 'DEVTOOLS_UNAVAILABLE',
+      message: '浏览器预览模式无法由应用打开调试面板',
+      action: '请使用浏览器自带的开发者工具'
+    } satisfies AppError
+  },
   async listen() {
     return () => undefined
   }
@@ -299,6 +312,7 @@ const tauriApi: DesktopApi = {
   replayExchange: (id, mode) => invoke('replay_exchange', { exchangeId: id, mode }),
   hasAcceptedDisclaimer: () => invoke('has_accepted_disclaimer'),
   acceptDisclaimer: () => invoke('accept_disclaimer'),
+  openDevtools: () => invoke('open_devtools'),
   async listen<T>(event: DesktopEvent, handler: (payload: T) => void) {
     return tauriListen<T>(event, ({ payload }) => handler(payload))
   }

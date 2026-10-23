@@ -16,7 +16,11 @@
         "width": 1440,
         "height": 900,
         "minWidth": 1080,
-        "minHeight": 700
+        "minHeight": 700,
+        "devtools": true,
+        "theme": "Light",
+        "titleBarStyle": "Transparent",
+        "backgroundColor": "#e7efff"
       }
     ],
     "security": {

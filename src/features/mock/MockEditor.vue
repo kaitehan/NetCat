@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { nextTick, onMounted, reactive, shallowRef, useTemplateRef, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, shallowRef, useTemplateRef, watch } from 'vue'
 import { Save, X } from '@lucide/vue'
+import BodyEditor from '../../components/BodyEditor.vue'
+import { bodyEditorPolicy } from '../../components/body-editor-policy'
 import type { MatchKind, MockRule } from '../../shared/types'
 
 const { rule, initialFocus = null } = defineProps<{
@@ -17,7 +19,18 @@ const error = shallowRef<string | null>(null)
 const headersText = shallowRef('Content-Type: application/json')
 const draft = reactive<MockRule>(emptyRule())
 const headersInput = useTemplateRef<HTMLTextAreaElement>('headersInput')
-const bodyInput = useTemplateRef<HTMLTextAreaElement>('bodyInput')
+const bodyInput = useTemplateRef<{ focus: () => void }>('bodyInput')
+const bodyPolicy = computed(() => bodyEditorPolicy(
+  draft.responseBody,
+  responseContentType.value,
+  false
+))
+const responseContentType = computed(() => {
+  const header = headersText.value
+    .split('\n')
+    .find((line) => line.slice(0, line.indexOf(':')).trim().toLowerCase() === 'content-type')
+  return header?.slice(header.indexOf(':') + 1).trim()
+})
 
 function focusInitialField() {
   if (initialFocus === 'headers') {
@@ -204,10 +217,17 @@ function updateMatchKind(event: Event) {
         <textarea ref="headersInput" v-model="headersText" rows="3" spellcheck="false" />
       </label>
 
-      <label class="field field-grow">
+      <div class="field field-grow">
         <span>响应正文</span>
-        <textarea ref="bodyInput" v-model="draft.responseBody" rows="10" spellcheck="false" placeholder="{}" />
-      </label>
+        <BodyEditor
+          ref="bodyInput"
+          v-model="draft.responseBody"
+          :language="bodyPolicy.language"
+          :diagnostics="bodyPolicy.diagnostics"
+          :ariaLabel="'响应正文'"
+          class="mock-body-editor"
+        />
+      </div>
 
       <p v-if="error" class="form-error" role="alert">{{ error }}</p>
     </div>
@@ -299,6 +319,11 @@ function updateMatchKind(event: Event) {
   font: inherit;
   font-size: 12px;
   font-weight: 400;
+}
+
+.mock-body-editor {
+  min-height: 280px;
+  flex: 1;
 }
 
 .field input,

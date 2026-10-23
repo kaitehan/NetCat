@@ -8,12 +8,22 @@ import MockEditor from './features/mock/MockEditor.vue'
 import MockRulesPanel from './features/mock/MockRulesPanel.vue'
 import DisclaimerDialog from './features/onboarding/DisclaimerDialog.vue'
 import SettingsPage from './features/settings/SettingsPage.vue'
+import DiagnosticPanel from './features/diagnostics/DiagnosticPanel.vue'
+import { sanitizeTrafficDetail } from './features/diagnostics/debug-bridge'
 import TrafficInspector from './features/traffic/TrafficInspector.vue'
 import TrafficContextMenu, { type TrafficMenuAction } from './features/traffic/TrafficContextMenu.vue'
 import TrafficTable from './features/traffic/TrafficTable.vue'
 import { filterTraffic } from './features/traffic/traffic-filter'
 import { useNetCapture } from './composables/useNetCapture'
-import type { MockRule, ReplayMode, TrafficCopyKind, TrafficDetail, TrafficFilter, TrafficSummary } from './shared/types'
+import type {
+  DiagnosticTrafficDetail,
+  MockRule,
+  ReplayMode,
+  TrafficCopyKind,
+  TrafficDetail,
+  TrafficFilter,
+  TrafficSummary
+} from './shared/types'
 
 const capture = useNetCapture()
 const activeView = shallowRef<'traffic' | 'mocks' | 'settings'>('traffic')
@@ -28,6 +38,9 @@ const lastHidden = shallowRef<{ kind: 'url' | 'host'; value: string } | null>(nu
 const contextRow = shallowRef<TrafficSummary | null>(null)
 const contextDetail = shallowRef<TrafficDetail | null>(null)
 const contextPosition = reactive({ x: 0, y: 0 })
+const diagnosticsOpen = shallowRef(false)
+const diagnosticDetail = shallowRef<DiagnosticTrafficDetail | null>(null)
+const diagnosticDetailLoading = shallowRef(false)
 const filter = reactive<TrafficFilter>({
   query: '',
   method: 'ALL',
@@ -258,19 +271,32 @@ async function exportCa() {
   toast.value = '证书已导出'
 }
 
+async function selectDiagnosticTraffic(id: string) {
+  diagnosticDetailLoading.value = true
+  try {
+    const detail = await capture.getTrafficDetail(id)
+    diagnosticDetail.value = detail ? sanitizeTrafficDetail(detail) : null
+  } finally {
+    diagnosticDetailLoading.value = false
+  }
+}
+
 onMounted(() => void capture.initialize())
 </script>
 
 <template>
-  <div class="app-shell">
+  <div class="app-frame" :class="{ 'diagnostics-open': diagnosticsOpen }">
+    <div class="app-shell" :class="{ 'settings-active': activeView === 'settings' }">
     <AppSidebar
       :active-view="activeView"
       :traffic-count="capture.traffic.value.length"
       :mock-count="capture.mockRules.value.length"
+      :proxy-status="capture.proxyStatus.value"
       @change-view="activeView = $event"
     />
 
     <TopToolbar
+      v-if="activeView !== 'settings'"
       :status="capture.proxyStatus.value"
       :busy="capture.busy.value"
       @toggle-proxy="capture.toggleProxy"
@@ -336,6 +362,7 @@ onMounted(() => void capture.initialize())
           @update-system-proxy="capture.setSystemProxy"
           @generate-ca="capture.generateCa"
           @export-ca="exportCa"
+          @open-diagnostics="diagnosticsOpen = true"
         />
       </main>
 
@@ -359,10 +386,6 @@ onMounted(() => void capture.initialize())
     </div>
 
     <footer class="status-bar">
-      <div class="status-summary">
-        <span>{{ capture.proxyStatus.value.state === 'running' ? 'HTTP/1.1 + HTTPS 捕获中' : '就绪' }}</span>
-        <span v-if="capture.proxyStatus.value.lanIp">手机代理 {{ capture.proxyStatus.value.lanIp }}:{{ capture.proxyStatus.value.port }}</span>
-      </div>
       <span class="status-limits">上限 5000 条 · 正文 10 MB</span>
     </footer>
 
@@ -395,15 +418,37 @@ onMounted(() => void capture.initialize())
     </div>
 
     <button v-if="toast" type="button" class="toast" @click="lastHidden ? undoLastHide() : toast = null">{{ toast }}</button>
+    </div>
+
+    <DiagnosticPanel
+      v-if="diagnosticsOpen"
+      :logs="capture.diagnosticLogs.value"
+      :traffic="capture.traffic.value"
+      :detail="diagnosticDetail"
+      :loading-detail="diagnosticDetailLoading"
+      @close="diagnosticsOpen = false"
+      @clear-logs="capture.clearDiagnosticLogs"
+      @select-traffic="selectDiagnosticTraffic"
+    />
   </div>
 </template>
 
 <style scoped>
+.app-frame {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .app-shell {
   --sidebar-width: 184px;
   display: grid;
-  width: 100%;
+  min-width: 0;
   height: 100%;
+  flex: 1 1 auto;
   padding: 10px 10px 0;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   grid-template-rows: 52px minmax(0, 1fr) 20px;
@@ -422,6 +467,13 @@ onMounted(() => void capture.initialize())
 
 .app-shell > :deep(.toolbar) {
   grid-area: toolbar;
+}
+
+.app-shell.settings-active {
+  grid-template-rows: minmax(0, 1fr) 20px;
+  grid-template-areas:
+    "sidebar body"
+    "sidebar status";
 }
 
 .app-body {
@@ -567,18 +619,11 @@ onMounted(() => void capture.initialize())
   min-width: 0;
   grid-area: status;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
   background: transparent;
   color: var(--text-muted);
   font-size: 9px;
-}
-
-.status-summary {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
 }
 
 .status-limits {
@@ -682,8 +727,5 @@ onMounted(() => void capture.initialize())
     display: none;
   }
 
-  .status-summary {
-    padding-left: 2px;
-  }
 }
 </style>

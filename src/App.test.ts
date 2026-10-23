@@ -55,6 +55,7 @@ describe('App', () => {
       replayExchange: vi.fn(),
       hasAcceptedDisclaimer: vi.fn().mockResolvedValue(true),
       acceptDisclaimer: vi.fn(),
+      openDevtools: vi.fn(),
       listen: vi.fn().mockResolvedValue(() => undefined)
     } satisfies DesktopApi
 
@@ -106,10 +107,11 @@ describe('App', () => {
       replayExchange: vi.fn(),
       hasAcceptedDisclaimer: vi.fn().mockResolvedValue(true),
       acceptDisclaimer: vi.fn(),
+      openDevtools: vi.fn(),
       listen: vi.fn().mockResolvedValue(() => undefined)
     } satisfies DesktopApi
 
-    render(App, {
+    const { container } = render(App, {
       global: {
         provide: {
           [desktopApiKey as symbol]: api
@@ -119,6 +121,8 @@ describe('App', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: '设置' }))
     expect(await screen.findByRole('heading', { name: '设置' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '启动代理' })).not.toBeInTheDocument()
+    expect(container.querySelector('.app-shell')).toHaveClass('settings-active')
     expect(screen.getByRole('tab', { name: '代理配置' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('spinbutton', { name: '代理端口' })).toHaveValue(28086)
     expect(screen.getByRole('checkbox', { name: '系统代理' })).toBeChecked()
@@ -183,6 +187,7 @@ describe('App', () => {
       replayExchange: vi.fn(),
       hasAcceptedDisclaimer: vi.fn().mockResolvedValue(true),
       acceptDisclaimer: vi.fn(),
+      openDevtools: vi.fn(),
       listen: vi.fn().mockResolvedValue(() => undefined)
     } satisfies DesktopApi
 
@@ -214,8 +219,88 @@ describe('App', () => {
     expect(await screen.findByDisplayValue('替换响应内容 · GET /users')).toBeVisible()
     expect(screen.getByLabelText('URL 匹配')).toHaveValue(row.url)
     expect(screen.getByLabelText('优先级')).toHaveValue(6)
-    expect(screen.getByLabelText('响应正文')).toHaveValue('{"ok":true}')
+    expect(screen.getByRole('textbox', { name: '响应正文' })).toHaveValue('{"ok":true}')
     expect(screen.getByLabelText('响应头')).toHaveValue('content-type: application/json\nx-source: upstream')
-    expect(screen.getByLabelText('响应正文')).toHaveFocus()
+    expect(screen.getByRole('textbox', { name: '响应正文' })).toHaveFocus()
+  })
+
+  it('opens the dark diagnostics panel beside the app and forwards diagnostic events to it', async () => {
+    const handlers = new Map<string, (payload: unknown) => void>()
+    const unlisten = vi.fn()
+    const openDevtools = vi.fn().mockResolvedValue(undefined)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const api = {
+      getProxyStatus: vi.fn().mockResolvedValue(status),
+      startProxy: vi.fn(),
+      stopProxy: vi.fn(),
+      setCaptureEnabled: vi.fn(),
+      getCaStatus: vi.fn().mockResolvedValue({ generated: true, certificatePath: '/ca.crt', fingerprint: 'AA' }),
+      generateCa: vi.fn(),
+      exportCa: vi.fn(),
+      enableSystemProxy: vi.fn(),
+      restoreSystemProxy: vi.fn(),
+      isSystemProxyEnabled: vi.fn().mockResolvedValue(false),
+      listTraffic: vi.fn().mockResolvedValue([]),
+      getTrafficDetail: vi.fn(),
+      clearTraffic: vi.fn(),
+      listMockRules: vi.fn().mockResolvedValue([]),
+      saveMockRule: vi.fn(),
+      deleteMockRule: vi.fn(),
+      setMockEnabled: vi.fn(),
+      exportHar: vi.fn(),
+      copyCurl: vi.fn(),
+      copyExchange: vi.fn(),
+      replayExchange: vi.fn(),
+      hasAcceptedDisclaimer: vi.fn().mockResolvedValue(true),
+      acceptDisclaimer: vi.fn(),
+      openDevtools,
+      listen: vi.fn(async (event: string, handler: (payload: unknown) => void) => {
+        handlers.set(event, handler)
+        return unlisten
+      })
+    } satisfies DesktopApi
+
+    const { unmount } = render(App, {
+      global: {
+        provide: {
+          [desktopApiKey as symbol]: api
+        }
+      }
+    })
+
+    await waitFor(() => expect(handlers.has('diagnostic-log')).toBe(true))
+    handlers.get('diagnostic-log')?.({
+      timestamp: '2026-10-23T10:00:00Z',
+      level: 'warn',
+      scope: 'mock',
+      event: 'mock.failed',
+      message: 'Mock 响应生成失败',
+      exchangeId: 'exchange-1',
+      details: { ruleId: 'rule-1' }
+    })
+    expect(warn).toHaveBeenCalledWith(
+      '[NetCapture][mock] Mock 响应生成失败',
+      {
+        timestamp: '2026-10-23T10:00:00Z',
+        event: 'mock.failed',
+        exchangeId: 'exchange-1',
+        ruleId: 'rule-1'
+      }
+    )
+
+    await fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    await fireEvent.click(screen.getByRole('tab', { name: '系统配置' }))
+    await fireEvent.click(screen.getByRole('button', { name: '打开调试面板' }))
+    expect(await screen.findByRole('complementary', { name: '调试面板' })).toBeVisible()
+    expect(screen.getByRole('tab', { name: 'Console' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Mock 响应生成失败')).toBeVisible()
+    expect(openDevtools).not.toHaveBeenCalled()
+
+    await fireEvent.click(screen.getByRole('button', { name: '关闭调试面板' }))
+    expect(screen.queryByRole('complementary', { name: '调试面板' })).not.toBeInTheDocument()
+
+    unmount()
+    expect(unlisten).toHaveBeenCalled()
+    warn.mockRestore()
   })
 })

@@ -30,7 +30,8 @@ use crate::{
     error::AppError,
     export::filtered_request_headers,
     models::{
-        MockRule, ProxyConfig, ProxyState, ProxyStatus, ReplayMode, ReplayResult, TrafficDraft,
+        DiagnosticLevel, DiagnosticLog, DiagnosticScope, MockRule, ProxyConfig, ProxyState,
+        ProxyStatus, ReplayMode, ReplayResult, TrafficDraft,
     },
     rules::select_mock,
     storage::Store,
@@ -41,6 +42,7 @@ pub trait ProxyEventSink: Send + Sync + 'static {
     fn traffic_created(&self, _id: &str) {}
     fn traffic_updated(&self, _id: &str) {}
     fn storage_warning(&self, _error: &AppError) {}
+    fn diagnostic_log(&self, _log: &DiagnosticLog) {}
 }
 
 #[derive(Default)]
@@ -96,6 +98,16 @@ impl ProxyService {
         exchange_id: &str,
         mode: ReplayMode,
     ) -> Result<ReplayResult, AppError> {
+        self.event_sink.diagnostic_log(
+            &DiagnosticLog::new(
+                DiagnosticLevel::Info,
+                DiagnosticScope::Replay,
+                "replay.started",
+                "开始重新发送请求",
+            )
+            .with_exchange_id(exchange_id)
+            .with_detail("mode", replay_mode_name(mode)),
+        );
         let original = self.store.get_traffic_detail(exchange_id)?;
         if original.summary.method.eq_ignore_ascii_case("CONNECT") {
             return Err(
@@ -144,10 +156,36 @@ impl ProxyService {
         if mode == ReplayMode::MockAware {
             let rules = self.store.list_mock_rules()?;
             if let Some(rule) = select_mock(&rules, &base.method, &base.url).cloned() {
+                self.event_sink.diagnostic_log(
+                    &DiagnosticLog::new(
+                        DiagnosticLevel::Info,
+                        DiagnosticScope::Mock,
+                        "mock.matched",
+                        "重新发送请求命中 Mock 规则",
+                    )
+                    .with_exchange_id(&id)
+                    .with_detail("ruleId", rule.id.clone())
+                    .with_detail("ruleName", rule.name.clone())
+                    .with_detail("priority", rule.priority)
+                    .with_detail("delayMs", rule.delay_ms),
+                );
                 if rule.delay_ms > 0 {
                     tokio::time::sleep(Duration::from_millis(rule.delay_ms)).await;
                 }
-                let response = build_mock_response(&rule)?;
+                let response = build_mock_response(&rule).map_err(|error| {
+                    self.event_sink.diagnostic_log(
+                        &DiagnosticLog::new(
+                            DiagnosticLevel::Error,
+                            DiagnosticScope::Mock,
+                            "mock.failed",
+                            "Mock 响应生成失败",
+                        )
+                        .with_exchange_id(&id)
+                        .with_detail("ruleId", rule.id.clone())
+                        .with_detail("errorCode", error.code.clone()),
+                    );
+                    error
+                })?;
                 let mut completed = base;
                 completed.status = Some(response.status().as_u16());
                 completed.duration_ms = Some(started.elapsed().as_millis() as u64);
@@ -206,11 +244,12 @@ impl ProxyService {
                         failed.error = Some(error.to_string());
                         self.store.insert_exchange(failed)?;
                         self.event_sink.traffic_updated(&id);
-                        return Err(
+                        let app_error =
                             AppError::new("REPLAY_RESPONSE_ERROR", "无法读取重发响应正文")
                                 .with_detail(error.to_string())
-                                .with_action("请检查上游响应后重试"),
-                        );
+                                .with_action("请检查上游响应后重试");
+                        self.log_replay_failure(&id, &app_error);
+                        return Err(app_error);
                     }
                 };
                 let mut completed = base;
@@ -229,7 +268,7 @@ impl ProxyService {
                 failed.error = Some(error.to_string());
                 self.store.insert_exchange(failed)?;
                 self.event_sink.traffic_updated(&id);
-                Err(AppError::new(
+                let app_error = AppError::new(
                     if error.is_timeout() {
                         "REPLAY_TIMEOUT"
                     } else {
@@ -242,18 +281,45 @@ impl ProxyService {
                     },
                 )
                 .with_detail(error.to_string())
-                .with_action("请检查目标服务和网络连接后重试"))
+                .with_action("请检查目标服务和网络连接后重试");
+                self.log_replay_failure(&id, &app_error);
+                Err(app_error)
             }
         }
     }
 
     fn replay_result(&self, id: &str, mocked: bool) -> Result<ReplayResult, AppError> {
         let exchange = self.store.get_traffic_detail(id)?.summary;
+        self.event_sink.diagnostic_log(
+            &DiagnosticLog::new(
+                DiagnosticLevel::Info,
+                DiagnosticScope::Replay,
+                "replay.completed",
+                "重新发送请求完成",
+            )
+            .with_exchange_id(id)
+            .with_detail("mocked", mocked)
+            .with_detail("status", exchange.status.unwrap_or_default())
+            .with_detail("durationMs", exchange.duration_ms.unwrap_or_default()),
+        );
         Ok(ReplayResult {
             exchange_id: id.to_string(),
             mocked,
             exchange,
         })
+    }
+
+    fn log_replay_failure(&self, id: &str, error: &AppError) {
+        self.event_sink.diagnostic_log(
+            &DiagnosticLog::new(
+                DiagnosticLevel::Error,
+                DiagnosticScope::Replay,
+                "replay.failed",
+                error.message.clone(),
+            )
+            .with_exchange_id(id)
+            .with_detail("errorCode", error.code.clone()),
+        );
     }
 
     pub async fn start(
@@ -265,6 +331,17 @@ impl ProxyService {
         if self.status().state != ProxyState::Stopped {
             return Err(AppError::new("PROXY_ALREADY_RUNNING", "代理已经启动"));
         }
+        self.event_sink.diagnostic_log(
+            &DiagnosticLog::new(
+                DiagnosticLevel::Info,
+                DiagnosticScope::Proxy,
+                "proxy.starting",
+                "正在启动代理",
+            )
+            .with_detail("port", config.port)
+            .with_detail("allowLan", config.allow_lan)
+            .with_detail("captureEnabled", config.capture_enabled),
+        );
         self.update_status(ProxyStatus {
             state: ProxyState::Starting,
             bind_address: None,
@@ -284,6 +361,16 @@ impl ProxyService {
             .await
             .map_err(|error| {
                 self.fail_status(config.port, error.to_string());
+                self.event_sink.diagnostic_log(
+                    &DiagnosticLog::new(
+                        DiagnosticLevel::Error,
+                        DiagnosticScope::Proxy,
+                        "proxy.failed",
+                        "代理监听端口失败",
+                    )
+                    .with_detail("port", config.port)
+                    .with_detail("errorCode", "PORT_UNAVAILABLE"),
+                );
                 AppError::new("PORT_UNAVAILABLE", format!("无法监听端口 {}", config.port))
                     .with_detail(error.to_string())
                     .with_action("请更换端口或关闭占用该端口的程序")
@@ -330,6 +417,17 @@ impl ProxyService {
             error: None,
         };
         self.update_status(status.clone());
+        self.event_sink.diagnostic_log(
+            &DiagnosticLog::new(
+                DiagnosticLevel::Info,
+                DiagnosticScope::Proxy,
+                "proxy.started",
+                "代理已启动",
+            )
+            .with_detail("bindAddress", address.ip().to_string())
+            .with_detail("port", address.port())
+            .with_detail("allowLan", config.allow_lan),
+        );
         Ok(status)
     }
 
@@ -338,6 +436,12 @@ impl ProxyService {
             return Ok(self.status());
         }
         let current = self.status();
+        self.event_sink.diagnostic_log(&DiagnosticLog::new(
+            DiagnosticLevel::Info,
+            DiagnosticScope::Proxy,
+            "proxy.stopping",
+            "正在停止代理",
+        ));
         self.update_status(ProxyStatus {
             state: ProxyState::Stopping,
             ..current
@@ -355,6 +459,12 @@ impl ProxyService {
         }
         let status = ProxyStatus::default();
         self.update_status(status.clone());
+        self.event_sink.diagnostic_log(&DiagnosticLog::new(
+            DiagnosticLevel::Info,
+            DiagnosticScope::Proxy,
+            "proxy.stopped",
+            "代理已停止",
+        ));
         Ok(status)
     }
 
@@ -485,6 +595,19 @@ impl HttpHandler for CaptureHandler {
             select_mock(&rules, &method, &url).cloned()
         };
         if let Some(rule) = selected_rule {
+            self.event_sink.diagnostic_log(
+                &DiagnosticLog::new(
+                    DiagnosticLevel::Info,
+                    DiagnosticScope::Mock,
+                    "mock.matched",
+                    "请求命中 Mock 规则",
+                )
+                .with_exchange_id(&pending.id)
+                .with_detail("ruleId", rule.id.clone())
+                .with_detail("ruleName", rule.name.clone())
+                .with_detail("priority", rule.priority)
+                .with_detail("delayMs", rule.delay_ms),
+            );
             if rule.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(rule.delay_ms)).await;
             }
@@ -500,7 +623,18 @@ impl HttpHandler for CaptureHandler {
                     return response.into();
                 }
                 Err(error) => {
-                    return simple_response(StatusCode::BAD_GATEWAY, &error.message).into()
+                    self.event_sink.diagnostic_log(
+                        &DiagnosticLog::new(
+                            DiagnosticLevel::Error,
+                            DiagnosticScope::Mock,
+                            "mock.failed",
+                            "Mock 响应生成失败",
+                        )
+                        .with_exchange_id(&pending.id)
+                        .with_detail("ruleId", rule.id.clone())
+                        .with_detail("errorCode", error.code.clone()),
+                    );
+                    return simple_response(StatusCode::BAD_GATEWAY, &error.message).into();
                 }
             }
         }
@@ -548,6 +682,15 @@ impl HttpHandler for CaptureHandler {
     ) -> Response<Body> {
         let response = simple_response(StatusCode::BAD_GATEWAY, "上游连接失败");
         if let Some(pending) = self.pending.take() {
+            self.event_sink.diagnostic_log(
+                &DiagnosticLog::new(
+                    DiagnosticLevel::Error,
+                    DiagnosticScope::Proxy,
+                    "proxy.upstream_failed",
+                    "上游连接失败",
+                )
+                .with_exchange_id(&pending.id),
+            );
             self.record(
                 pending,
                 &response,
@@ -557,6 +700,13 @@ impl HttpHandler for CaptureHandler {
             );
         }
         response
+    }
+}
+
+fn replay_mode_name(mode: ReplayMode) -> &'static str {
+    match mode {
+        ReplayMode::Upstream => "upstream",
+        ReplayMode::MockAware => "mockAware",
     }
 }
 

@@ -8,8 +8,9 @@ use crate::{
     error::AppError,
     export::{build_exchange_copy as create_exchange_copy, build_har},
     models::{
-        CaStatus, MockRule, ProxyConfig, ProxyStatus, ReplayMode, ReplayResult, TrafficCopyKind,
-        TrafficDetail, TrafficFilter, TrafficSummary,
+        CaStatus, DiagnosticLevel, DiagnosticLog, DiagnosticScope, MockRule, ProxyConfig,
+        ProxyStatus, ReplayMode, ReplayResult, TrafficCopyKind, TrafficDetail, TrafficFilter,
+        TrafficSummary,
     },
     proxy::{ProxyEventSink, ProxyService},
     storage::Store,
@@ -42,7 +43,25 @@ impl ProxyEventSink for TauriEventSink {
 
     fn storage_warning(&self, error: &AppError) {
         let _ = self.0.emit("storage-warning", error);
+        let _ = self.0.emit(
+            "diagnostic-log",
+            DiagnosticLog::new(
+                DiagnosticLevel::Error,
+                DiagnosticScope::System,
+                "storage.failed",
+                error.message.clone(),
+            )
+            .with_detail("errorCode", error.code.clone()),
+        );
     }
+
+    fn diagnostic_log(&self, log: &DiagnosticLog) {
+        let _ = self.0.emit("diagnostic-log", log);
+    }
+}
+
+fn emit_diagnostic(app: &tauri::AppHandle, log: DiagnosticLog) {
+    let _ = app.emit("diagnostic-log", log);
 }
 
 #[tauri::command]
@@ -62,9 +81,12 @@ async fn start_proxy(
 }
 
 #[tauri::command]
-async fn stop_proxy(state: State<'_, AppState>) -> Result<ProxyStatus, AppError> {
+async fn stop_proxy(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<ProxyStatus, AppError> {
     let status = state.proxy.stop().await?;
-    state.system_proxy.restore()?;
+    restore_system_proxy_inner(&app, &state.system_proxy)?;
     Ok(status)
 }
 
@@ -96,17 +118,77 @@ fn export_ca(state: State<'_, AppState>, destination: String) -> Result<(), AppE
 }
 
 #[tauri::command]
-fn enable_system_proxy(state: State<'_, AppState>) -> Result<(), AppError> {
+fn enable_system_proxy(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
     let status = state.proxy.status();
     if status.state != crate::models::ProxyState::Running {
         return Err(AppError::new("PROXY_NOT_RUNNING", "请先启动代理"));
     }
-    state.system_proxy.enable(status.port)
+    match state.system_proxy.enable(status.port) {
+        Ok(()) => {
+            emit_diagnostic(
+                &app,
+                DiagnosticLog::new(
+                    DiagnosticLevel::Info,
+                    DiagnosticScope::System,
+                    "system_proxy.enabled",
+                    "系统代理已启用",
+                )
+                .with_detail("port", status.port),
+            );
+            Ok(())
+        }
+        Err(error) => {
+            emit_diagnostic(
+                &app,
+                DiagnosticLog::new(
+                    DiagnosticLevel::Error,
+                    DiagnosticScope::System,
+                    "system_proxy.failed",
+                    error.message.clone(),
+                )
+                .with_detail("errorCode", error.code.clone()),
+            );
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
-fn restore_system_proxy(state: State<'_, AppState>) -> Result<(), AppError> {
-    state.system_proxy.restore()
+fn restore_system_proxy(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    restore_system_proxy_inner(&app, &state.system_proxy)
+}
+
+fn restore_system_proxy_inner(
+    app: &tauri::AppHandle,
+    system_proxy: &SystemProxyManager,
+) -> Result<(), AppError> {
+    match system_proxy.restore() {
+        Ok(()) => {
+            emit_diagnostic(
+                app,
+                DiagnosticLog::new(
+                    DiagnosticLevel::Info,
+                    DiagnosticScope::System,
+                    "system_proxy.restored",
+                    "系统代理已恢复",
+                ),
+            );
+            Ok(())
+        }
+        Err(error) => {
+            emit_diagnostic(
+                app,
+                DiagnosticLog::new(
+                    DiagnosticLevel::Error,
+                    DiagnosticScope::System,
+                    "system_proxy.restore_failed",
+                    error.message.clone(),
+                )
+                .with_detail("errorCode", error.code.clone()),
+            );
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
@@ -206,6 +288,18 @@ fn accept_disclaimer(state: State<'_, AppState>) -> Result<(), AppError> {
     state.store.set_setting(DISCLAIMER_KEY, "true")
 }
 
+#[tauri::command]
+fn open_devtools(app: tauri::AppHandle) -> Result<(), AppError> {
+    let window = app.get_webview_window("main").ok_or_else(|| {
+        AppError::new("DEVTOOLS_WINDOW_NOT_FOUND", "无法找到应用主窗口")
+            .with_action("请重启应用后重试")
+    })?;
+    if !window.is_devtools_open() {
+        window.open_devtools();
+    }
+    Ok(())
+}
+
 pub fn run() {
     let application = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -264,6 +358,7 @@ pub fn run() {
             replay_exchange,
             has_accepted_disclaimer,
             accept_disclaimer,
+            open_devtools,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build NetCapture");

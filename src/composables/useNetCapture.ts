@@ -3,6 +3,7 @@ import { desktopApi, desktopApiKey, normalizeDesktopError } from '../api/desktop
 import type {
   AppError,
   CaStatus,
+  DiagnosticLog,
   MockRule,
   ProxyConfig,
   ProxyStatus,
@@ -13,6 +14,11 @@ import type {
   TrafficSummary
 } from '../shared/types'
 import { createEventBatcher } from './event-batcher'
+import {
+  appendDiagnosticLog,
+  installDebugBridge,
+  writeDiagnosticLog
+} from '../features/diagnostics/debug-bridge'
 
 export function useNetCapture() {
   const api = inject(desktopApiKey, desktopApi)
@@ -35,7 +41,9 @@ export function useNetCapture() {
   const allowLan = shallowRef(false)
   const captureEnabled = shallowRef(true)
   const port = shallowRef(28086)
+  const diagnosticLogs = shallowRef<readonly DiagnosticLog[]>([])
   const unlisteners: Array<() => void> = []
+  const removeDebugBridge = installDebugBridge(api)
   const trafficEvents = createEventBatcher(reloadTraffic, 75)
 
   const isRunning = computed(() => proxyStatus.value.state === 'running')
@@ -65,6 +73,10 @@ export function useNetCapture() {
       unlisteners.push(await api.listen<string>('traffic-updated', trafficEvents.schedule))
       unlisteners.push(await api.listen<AppError>('storage-warning', (payload) => {
         error.value = payload
+      }))
+      unlisteners.push(await api.listen<DiagnosticLog>('diagnostic-log', (payload) => {
+        diagnosticLogs.value = appendDiagnosticLog(diagnosticLogs.value, payload)
+        writeDiagnosticLog(payload)
       }))
     } catch (cause) {
       error.value = normalizeDesktopError(cause)
@@ -205,6 +217,20 @@ export function useNetCapture() {
     })
   }
 
+  async function openDevtools() {
+    await runAction(async () => {
+      await api.openDevtools()
+      console.info('[NetCapture][system] 调试面板已打开', {
+        proxyStatus: proxyStatus.value,
+        trafficQueries: [
+          '__NETCAPTURE_DEBUG__.status()',
+          '__NETCAPTURE_DEBUG__.recent()',
+          '__NETCAPTURE_DEBUG__.get(exchangeId)'
+        ]
+      })
+    })
+  }
+
   async function runAction(action: () => Promise<void>) {
     busy.value = true
     error.value = null
@@ -221,9 +247,14 @@ export function useNetCapture() {
     error.value = null
   }
 
+  function clearDiagnosticLogs() {
+    diagnosticLogs.value = []
+  }
+
   onBeforeUnmount(() => {
     trafficEvents.cancel()
     unlisteners.splice(0).forEach((unlisten) => unlisten())
+    removeDebugBridge()
   })
 
   return {
@@ -241,6 +272,7 @@ export function useNetCapture() {
     allowLan,
     captureEnabled: readonly(captureEnabled),
     port,
+    diagnosticLogs: readonly(diagnosticLogs),
     isRunning,
     initialize,
     toggleProxy,
@@ -257,6 +289,8 @@ export function useNetCapture() {
     setMockEnabled,
     generateCa,
     acceptDisclaimer,
+    openDevtools,
+    clearDiagnosticLogs,
     dismissError
   }
 }

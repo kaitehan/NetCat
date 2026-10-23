@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, shallowRef, watch } from 'vue'
 import { Clipboard, Clock3, FileWarning, MousePointer2 } from '@lucide/vue'
+import BodyEditor from '../../components/BodyEditor.vue'
+import { bodyEditorPolicy } from '../../components/body-editor-policy'
 import type { TrafficDetail } from '../../shared/types'
 
 const { detail } = defineProps<{
@@ -18,30 +20,33 @@ watch(() => detail?.id, () => {
   activeTab.value = 'request'
 })
 
-const formattedResponse = computed(() => formatBody(detail?.responseBodyText, detail?.contentType))
-const formattedRequest = computed(() => formatBody(
-  detail?.requestBodyText,
-  detail?.requestHeaders['content-type']
+const responseBody = computed(() => bodyEditorPolicy(
+  bodyText(detail?.responseBodyText),
+  detail?.contentType ?? findHeader(detail?.responseHeaders, 'content-type'),
+  true
+))
+const requestBody = computed(() => bodyEditorPolicy(
+  bodyText(detail?.requestBodyText),
+  findHeader(detail?.requestHeaders, 'content-type'),
+  true
 ))
 const hexBody = computed(() => formatHex(
   activeTab.value === 'hex' ? detail?.responseBody ?? [] : []
 ))
 
-function formatBody(value: string | null | undefined, contentType?: string | null): string {
+function bodyText(value: string | null | undefined): string {
   if (value === '') {
     return '无正文'
   }
   if (value == null) {
     return '二进制或无法解码的正文，请在 Hex 中查看'
   }
-  if (contentType?.includes('json')) {
-    try {
-      return JSON.stringify(JSON.parse(value), null, 2)
-    } catch {
-      return value
-    }
-  }
   return value
+}
+
+function findHeader(headers: Record<string, string> | undefined, name: string): string | undefined {
+  const entry = Object.entries(headers ?? {}).find(([headerName]) => headerName.toLowerCase() === name)
+  return entry?.[1]
 }
 
 function formatHex(body: readonly number[]): string {
@@ -102,7 +107,13 @@ function formatHex(body: readonly number[]): string {
           </section>
           <section class="detail-section body-section">
             <h3>Body</h3>
-            <pre>{{ formattedRequest }}</pre>
+            <BodyEditor
+              :model-value="requestBody.value"
+              :language="requestBody.language"
+              :diagnostics="requestBody.diagnostics"
+              read-only
+              :ariaLabel="'请求正文'"
+            />
           </section>
         </template>
 
@@ -122,7 +133,13 @@ function formatHex(body: readonly number[]): string {
           </section>
           <section class="detail-section body-section">
             <h3>Body</h3>
-            <pre>{{ formattedResponse }}</pre>
+            <BodyEditor
+              :model-value="responseBody.value"
+              :language="responseBody.language"
+              :diagnostics="responseBody.diagnostics"
+              read-only
+              :ariaLabel="'响应正文'"
+            />
           </section>
         </template>
 
@@ -135,7 +152,12 @@ function formatHex(body: readonly number[]): string {
 
         <section v-else class="detail-section body-section">
           <h3>Response bytes</h3>
-          <pre>{{ hexBody }}</pre>
+          <BodyEditor
+            :model-value="hexBody"
+            language="plaintext"
+            read-only
+            :ariaLabel="'响应 Hex'"
+          />
         </section>
       </div>
     </template>

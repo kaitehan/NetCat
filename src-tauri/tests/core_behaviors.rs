@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use netcapture_lib::{
     export::{build_curl, build_exchange_copy, build_har},
-    models::{MatchKind, MockRule, ProxyConfig, ProxyStatus, TrafficCopyKind, TrafficDraft},
+    models::{
+        DiagnosticLevel, DiagnosticLog, DiagnosticScope, MatchKind, MockRule, ProxyConfig,
+        ProxyStatus, TrafficCopyKind, TrafficDraft,
+    },
     rules::{select_mock, validate_rule},
     storage::Store,
 };
@@ -15,6 +18,27 @@ fn proxy_defaults_use_the_product_port_and_capture_traffic() {
     assert_eq!(config.port, 28086);
     assert!(config.capture_enabled);
     assert_eq!(status.port, 28086);
+}
+
+#[test]
+fn diagnostic_log_serializes_with_stable_camel_case_fields() {
+    let log = DiagnosticLog::new(
+        DiagnosticLevel::Warn,
+        DiagnosticScope::Replay,
+        "replay.failed",
+        "重新发送请求失败",
+    )
+    .with_exchange_id("exchange-1")
+    .with_detail("mode", "upstream");
+
+    let value = serde_json::to_value(log).unwrap();
+
+    assert_eq!(value["level"], "warn");
+    assert_eq!(value["scope"], "replay");
+    assert_eq!(value["event"], "replay.failed");
+    assert_eq!(value["exchangeId"], "exchange-1");
+    assert_eq!(value["details"]["mode"], "upstream");
+    assert!(value["timestamp"].as_str().unwrap().ends_with('Z'));
 }
 
 fn draft(index: usize, response_body: Vec<u8>) -> TrafficDraft {

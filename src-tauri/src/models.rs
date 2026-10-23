@@ -1,6 +1,67 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DiagnosticLevel {
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum DiagnosticScope {
+    Proxy,
+    Mock,
+    Replay,
+    System,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticLog {
+    pub timestamp: String,
+    pub level: DiagnosticLevel,
+    pub scope: DiagnosticScope,
+    pub event: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exchange_id: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub details: BTreeMap<String, Value>,
+}
+
+impl DiagnosticLog {
+    pub fn new(
+        level: DiagnosticLevel,
+        scope: DiagnosticScope,
+        event: impl Into<String>,
+        message: impl Into<String>,
+    ) -> Self {
+        Self {
+            timestamp: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            level,
+            scope,
+            event: event.into(),
+            message: message.into(),
+            exchange_id: None,
+            details: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_exchange_id(mut self, exchange_id: impl Into<String>) -> Self {
+        self.exchange_id = Some(exchange_id.into());
+        self
+    }
+
+    pub fn with_detail(mut self, name: impl Into<String>, value: impl Into<Value>) -> Self {
+        self.details.insert(name.into(), value.into());
+        self
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

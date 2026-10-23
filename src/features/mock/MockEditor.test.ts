@@ -18,9 +18,10 @@ describe('MockEditor', () => {
   it('emits a normalized valid rule', async () => {
     const { emitted } = render(MockEditor, { props: { rule: null } })
 
+    expect(screen.getByRole('region', { name: '响应正文' })).toBeVisible()
     await fireEvent.update(screen.getByLabelText('规则名称'), '用户列表')
     await fireEvent.update(screen.getByLabelText('URL 匹配'), '/users')
-    await fireEvent.update(screen.getByLabelText('响应正文'), '{"ok":true}')
+    await fireEvent.update(screen.getByRole('textbox', { name: '响应正文' }), '{"ok":true}')
     await fireEvent.click(screen.getByRole('button', { name: '保存规则' }))
 
     const saved = emitted().save as unknown[][] | undefined
@@ -40,6 +41,6 @@ describe('MockEditor', () => {
       }
     })
 
-    await waitFor(() => expect(screen.getByLabelText('响应正文')).toHaveFocus())
+    await waitFor(() => expect(screen.getByRole('textbox', { name: '响应正文' })).toHaveFocus())
   })
 })

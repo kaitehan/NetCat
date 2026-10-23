@@ -1,16 +1,34 @@
 <script setup lang="ts">
 import { Braces, FlaskConical, Network, Settings } from '@lucide/vue'
+import { computed } from 'vue'
 import appIcon from '../../src-tauri/icons/icon.png'
+import type { ProxyStatus } from '../shared/types'
 
-const { activeView, trafficCount, mockCount } = defineProps<{
+const { activeView, trafficCount, mockCount, proxyStatus } = defineProps<{
   activeView: 'traffic' | 'mocks' | 'settings'
   trafficCount: number
   mockCount: number
+  proxyStatus: ProxyStatus
 }>()
 
 const emit = defineEmits<{
   changeView: [view: 'traffic' | 'mocks' | 'settings']
 }>()
+
+const statusLabel = computed(() => {
+  switch (proxyStatus.state) {
+    case 'running':
+      return '捕获中'
+    case 'starting':
+      return '启动中'
+    case 'stopping':
+      return '停止中'
+    case 'error':
+      return '代理异常'
+    default:
+      return '就绪'
+  }
+})
 </script>
 
 <template>
@@ -51,16 +69,22 @@ const emit = defineEmits<{
       <p>请求数据只保存在本机</p>
     </div>
 
-    <button
-      type="button"
-      class="settings-row"
-      :class="{ active: activeView === 'settings' }"
-      aria-label="设置"
-      @click="emit('changeView', 'settings')"
-    >
-      <Settings :size="15" />
-      <span>设置</span>
-    </button>
+    <div class="sidebar-footer">
+      <button
+        type="button"
+        class="settings-row"
+        :class="{ active: activeView === 'settings' }"
+        aria-label="设置"
+        @click="emit('changeView', 'settings')"
+      >
+        <Settings :size="15" />
+        <span>设置</span>
+      </button>
+      <div class="sidebar-status" :class="`state-${proxyStatus.state}`" aria-label="代理状态">
+        <i aria-hidden="true" />
+        <span>{{ statusLabel }}</span>
+      </div>
+    </div>
   </aside>
 </template>
 
@@ -170,6 +194,39 @@ const emit = defineEmits<{
   cursor: pointer;
 }
 
+.sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar-status {
+  display: flex;
+  height: 10px;
+  padding: 0 9px;
+  align-items: center;
+  gap: 6px;
+  color: var(--sidebar-muted);
+  font-size: 9px;
+  line-height: 10px;
+}
+
+.sidebar-status i {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.sidebar-status.state-running {
+  color: var(--mock);
+}
+
+.sidebar-status.state-error {
+  color: var(--danger);
+}
+
 .settings-row:hover:not(.active) {
   background: var(--sidebar-hover);
   color: var(--sidebar-text);
@@ -191,7 +248,8 @@ const emit = defineEmits<{
   .navigation button span,
   .navigation b,
   .sidebar-note p,
-  .settings-row span {
+  .settings-row span,
+  .sidebar-status span {
     display: none;
   }
 
@@ -205,6 +263,11 @@ const emit = defineEmits<{
   .sidebar-note {
     padding-right: 0;
     padding-left: 0;
+    justify-content: center;
+  }
+
+  .sidebar-status {
+    padding: 0;
     justify-content: center;
   }
 }

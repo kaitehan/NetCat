@@ -30,8 +30,16 @@ describe('TrafficInspector', () => {
   it('shows formatted response and emits copy cURL', async () => {
     const { emitted } = render(TrafficInspector, { props: { detail } })
     await fireEvent.click(screen.getByRole('tab', { name: '响应' }))
-    expect(screen.getByText(/"ok": true/)).toBeVisible()
+    expect(screen.getByRole('region', { name: '响应正文' })).toHaveTextContent(/"ok": true/)
     await fireEvent.click(screen.getByRole('button', { name: '复制 cURL' }))
     expect(emitted().copyCurl).toEqual([[detail.id]])
+  })
+
+  it('shows response bytes in a dedicated Hex editor', async () => {
+    render(TrafficInspector, { props: { detail } })
+
+    await fireEvent.click(screen.getByRole('tab', { name: 'Hex' }))
+
+    expect(screen.getByRole('region', { name: '响应 Hex' })).toHaveTextContent('1f 8b 08 00')
   })
 })

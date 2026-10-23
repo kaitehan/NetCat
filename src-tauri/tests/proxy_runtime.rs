@@ -5,7 +5,9 @@ use std::{
 
 use netcapture_lib::{
     ca::{CaManager, SecretStore},
-    models::{MatchKind, MockRule, ProxyConfig, ProxyState, ReplayMode, TrafficDraft},
+    models::{
+        DiagnosticLog, MatchKind, MockRule, ProxyConfig, ProxyState, ReplayMode, TrafficDraft,
+    },
     proxy::{ProxyEventSink, ProxyService},
     storage::Store,
 };
@@ -14,15 +16,22 @@ use netcapture_lib::{
 struct MemorySecrets(Arc<Mutex<Option<String>>>);
 
 #[derive(Default)]
-struct CollectingEvents(Mutex<Vec<String>>);
+struct CollectingEvents {
+    traffic: Mutex<Vec<String>>,
+    diagnostics: Mutex<Vec<DiagnosticLog>>,
+}
 
 impl ProxyEventSink for CollectingEvents {
     fn traffic_created(&self, id: &str) {
-        self.0.lock().unwrap().push(format!("created:{id}"));
+        self.traffic.lock().unwrap().push(format!("created:{id}"));
     }
 
     fn traffic_updated(&self, id: &str) {
-        self.0.lock().unwrap().push(format!("updated:{id}"));
+        self.traffic.lock().unwrap().push(format!("updated:{id}"));
+    }
+
+    fn diagnostic_log(&self, log: &DiagnosticLog) {
+        self.diagnostics.lock().unwrap().push(log.clone());
     }
 }
 
@@ -92,7 +101,40 @@ async fn replay_works_while_proxy_is_stopped_and_preserves_request_body() {
             .response_body,
         b"ok"
     );
-    assert_eq!(events.0.lock().unwrap().len(), 2);
+    assert_eq!(events.traffic.lock().unwrap().len(), 2);
+    let diagnostics = events.diagnostics.lock().unwrap();
+    assert_eq!(diagnostics[0].event, "replay.started");
+    assert_eq!(diagnostics.last().unwrap().event, "replay.completed");
+}
+
+#[tokio::test]
+async fn replay_failure_emits_a_sanitized_diagnostic_event() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let store = Arc::new(Store::open_in_memory(5000, 1024).unwrap());
+    store
+        .insert_exchange(replay_source(format!("http://{address}/replay")))
+        .unwrap();
+    let events = Arc::new(CollectingEvents::default());
+    let service = ProxyService::with_event_sink(Arc::clone(&store), events.clone());
+
+    let error = service
+        .replay("source", ReplayMode::Upstream)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "REPLAY_UPSTREAM_ERROR");
+    let diagnostics = events.diagnostics.lock().unwrap();
+    let failed = diagnostics
+        .iter()
+        .find(|log| log.event == "replay.failed")
+        .unwrap();
+    assert_eq!(failed.level, netcapture_lib::models::DiagnosticLevel::Error);
+    assert_eq!(failed.details["errorCode"], "REPLAY_UPSTREAM_ERROR");
+    assert!(!failed.details.contains_key("url"));
+    assert!(!failed.details.contains_key("headers"));
+    assert!(!failed.details.contains_key("body"));
 }
 
 #[tokio::test]
@@ -117,7 +159,8 @@ async fn mock_aware_replay_uses_current_rule_without_running_proxy() {
             created_at: "2026-10-23T10:00:00Z".into(),
         })
         .unwrap();
-    let service = ProxyService::new(Arc::clone(&store));
+    let events = Arc::new(CollectingEvents::default());
+    let service = ProxyService::with_event_sink(Arc::clone(&store), events.clone());
 
     let result = service
         .replay("source", ReplayMode::MockAware)
@@ -133,6 +176,9 @@ async fn mock_aware_replay_uses_current_rule_without_running_proxy() {
             .response_body,
         b"mocked"
     );
+    let diagnostics = events.diagnostics.lock().unwrap();
+    assert!(diagnostics.iter().any(|log| log.event == "mock.matched"));
+    assert_eq!(diagnostics.last().unwrap().event, "replay.completed");
 }
 
 impl SecretStore for MemorySecrets {
@@ -203,13 +249,26 @@ async fn proxy_serves_mock_and_persists_exchange() {
     assert_eq!(rows.len(), 1);
     assert!(rows[0].mocked);
     assert_eq!(rows[0].host, "unresolvable.invalid");
-    let event_names = events.0.lock().unwrap().clone();
+    let event_names = events.traffic.lock().unwrap().clone();
     assert_eq!(event_names.len(), 2);
     assert!(event_names[0].starts_with("created:"));
     assert!(event_names[1].starts_with("updated:"));
+    let diagnostic_names = events
+        .diagnostics
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|log| log.event.clone())
+        .collect::<Vec<_>>();
+    assert!(diagnostic_names.contains(&"proxy.started".to_string()));
+    assert!(diagnostic_names.contains(&"mock.matched".to_string()));
 
     let stopped = service.stop().await.unwrap();
     assert_eq!(stopped.state, ProxyState::Stopped);
+    assert_eq!(
+        events.diagnostics.lock().unwrap().last().unwrap().event,
+        "proxy.stopped"
+    );
 }
 
 #[tokio::test]
