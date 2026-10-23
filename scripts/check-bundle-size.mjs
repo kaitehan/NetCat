@@ -1,5 +1,6 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { gzip } from 'node:zlib'
 import { promisify } from 'node:util'
 
@@ -19,7 +20,7 @@ for (const imported of entry?.imports ?? []) {
 }
 
 for (const file of javascript) {
-  const path = join(assetsDirectory.pathname, file)
+  const path = join(fileURLToPath(assetsDirectory), file)
   const { size } = await stat(path)
   const isMonaco = /monaco|worker|editor|jsonmode|body-editor|vs-/i.test(file)
   if (isMonaco) {
