@@ -90,24 +90,18 @@ impl MacOsSystemProxyBackend {
     }
 
     fn managed_service(&self) -> Result<String, AppError> {
-        Ok(self.managed_snapshot()?.0.service)
+        Ok(self.managed_snapshot()?.service)
     }
 
-    fn managed_snapshot(&self) -> Result<(MacOsProxySnapshot, bool), AppError> {
+    fn managed_snapshot(&self) -> Result<MacOsProxySnapshot, AppError> {
         // Use the captured service even after a restart or default-route change.
         let payload = self
             .store
             .get_setting(SNAPSHOT_KEY)?
             .ok_or_else(|| AppError::new("SYSTEM_PROXY_RESTORE_ERROR", "找不到系统代理恢复记录"))?;
         let value: Value = serde_json::from_str(&payload).map_err(snapshot_error)?;
-        let snapshot: MacOsProxySnapshot =
-            serde_json::from_value(value.get("payload").unwrap_or(&value).clone())
-                .map_err(snapshot_error)?;
-        let restoring = value
-            .get("restoring")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        Ok((snapshot, restoring))
+        serde_json::from_value(value.get("payload").unwrap_or(&value).clone())
+            .map_err(snapshot_error)
     }
 }
 
@@ -138,7 +132,22 @@ impl SystemProxyBackend for MacOsSystemProxyBackend {
     }
 
     fn is_managed(&self, port: u16) -> Result<bool, AppError> {
-        let (snapshot, restoring) = self.managed_snapshot()?;
+        let service = self.managed_service()?;
+        let expected = SystemProxyState {
+            enabled: true,
+            server: "127.0.0.1".into(),
+            port,
+        };
+        Ok(
+            get_proxy_state(self.command.as_ref(), &service, "-getwebproxy")? == expected
+                && get_proxy_state(self.command.as_ref(), &service, "-getsecurewebproxy")?
+                    == expected,
+        )
+    }
+
+    fn can_restore(&self, snapshot: &Value, port: u16, restoring: bool) -> Result<bool, AppError> {
+        let snapshot: MacOsProxySnapshot =
+            serde_json::from_value(snapshot.clone()).map_err(snapshot_error)?;
         let expected = SystemProxyState {
             enabled: true,
             server: "127.0.0.1".into(),
@@ -384,6 +393,69 @@ mod tests {
     }
 
     #[test]
+    fn status_after_partial_restore_does_not_report_live_ownership() {
+        for original_enabled in [false, true] {
+            let store = Arc::new(Store::open_in_memory(100, 1024).unwrap());
+            let commands = Arc::new(FakeNetworkSetup::with_enabled(original_enabled));
+            let manager = manager_with_commands(store.clone(), commands.clone());
+            manager.enable(8888).unwrap();
+            assert!(manager.status().unwrap().managed);
+            assert_eq!(manager.restore().unwrap_err().code, "SYSTEM_PROXY_ERROR");
+            let before = commands.states.lock().unwrap().clone();
+            let before_snapshot = store.get_setting(SNAPSHOT_KEY).unwrap();
+            let restarted = manager_with_commands(store.clone(), commands.clone());
+
+            let status = restarted.status().unwrap();
+
+            assert!(
+                !status.managed,
+                "partially restored proxy is not fully owned"
+            );
+            assert!(status.recovery_pending);
+            assert!(!status.conflict);
+            assert_eq!(*commands.states.lock().unwrap(), before);
+            assert_eq!(store.get_setting(SNAPSHOT_KEY).unwrap(), before_snapshot);
+            restarted.restore().unwrap();
+            assert!(!restarted.status().unwrap().recovery_pending);
+        }
+    }
+
+    #[test]
+    fn status_after_completed_restore_with_failed_snapshot_delete_is_not_managed() {
+        for original_enabled in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let database_path = directory.path().join("proxy.sqlite");
+            let store = Arc::new(Store::open(&database_path, 100, 1024).unwrap());
+            let commands = Arc::new(FakeNetworkSetup::with_enabled(original_enabled));
+            *commands.fail_https_restore.lock().unwrap() = false;
+            let manager = manager_with_commands(store.clone(), commands.clone());
+            manager.enable(8888).unwrap();
+            let database = rusqlite::Connection::open(database_path).unwrap();
+            database.execute_batch("CREATE TRIGGER reject_snapshot_delete BEFORE DELETE ON app_settings BEGIN SELECT RAISE(FAIL, 'snapshot delete rejected'); END;").unwrap();
+
+            assert_eq!(manager.restore().unwrap_err().code, "STORAGE_ERROR");
+            let before = commands.states.lock().unwrap().clone();
+            let restarted = manager_with_commands(store.clone(), commands.clone());
+            let status = restarted.status().unwrap();
+
+            assert!(
+                !status.managed,
+                "restored OS settings must not be shown as owned"
+            );
+            assert!(status.recovery_pending);
+            assert!(!status.conflict);
+            assert_eq!(*commands.states.lock().unwrap(), before);
+            assert!(store.get_setting(SNAPSHOT_KEY).unwrap().is_some());
+            database
+                .execute_batch("DROP TRIGGER reject_snapshot_delete")
+                .unwrap();
+            restarted.restore().unwrap();
+            let cleared = restarted.status().unwrap();
+            assert!(!cleared.managed && !cleared.recovery_pending && !cleared.conflict);
+        }
+    }
+
+    #[test]
     fn first_restore_rejects_external_change_back_to_original_disabled_state() {
         let store = Arc::new(Store::open_in_memory(100, 1024).unwrap());
         let commands = Arc::new(FakeNetworkSetup::new());
@@ -420,6 +492,9 @@ mod tests {
                 restarted.restore().unwrap_err().code,
                 "SYSTEM_PROXY_CONFLICT"
             );
+
+            let status = restarted.status().unwrap();
+            assert!(!status.managed && status.recovery_pending && status.conflict);
 
             assert_eq!(*commands.states.lock().unwrap(), before);
             assert!(restarted.is_managed().unwrap());

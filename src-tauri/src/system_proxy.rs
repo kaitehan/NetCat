@@ -143,7 +143,8 @@ impl SystemProxyManager {
             .map_err(|_| AppError::new("SYSTEM_PROXY_RESTORE_ERROR", "系统代理恢复记录损坏"))?;
         if value.get("version").is_none() && self.backend.platform() == "macos" {
             return Ok(crate::models::SystemProxyStatus {
-                managed: true,
+                // Legacy recovery has no managed port, so ownership cannot be proven.
+                managed: false,
                 recovery_pending: true,
                 conflict: false,
             });
@@ -480,6 +481,29 @@ mod tests {
 
         assert_eq!(fixture.backend.capture().unwrap(), legacy);
         assert!(!fixture.manager.is_managed().unwrap());
+    }
+
+    #[test]
+    fn legacy_status_does_not_claim_ownership_without_a_managed_port() {
+        let fixture = ProxyFixture::with_platform(false, false, false, "macos");
+        fixture
+            .store
+            .set_setting(
+                SNAPSHOT_KEY,
+                &json!({
+                    "service": "Wi-Fi",
+                    "web": {"enabled": false, "server": "", "port": 0},
+                    "secureWeb": {"enabled": false, "server": "", "port": 0}
+                })
+                .to_string(),
+            )
+            .unwrap();
+
+        let status = fixture.manager.status().unwrap();
+
+        assert!(!status.managed);
+        assert!(status.recovery_pending && !status.conflict);
+        assert_eq!(fixture.backend.restore_calls(), 0);
     }
 
     #[test]
