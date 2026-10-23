@@ -156,12 +156,9 @@ impl SystemProxyBackend for MacOsSystemProxyBackend {
         let matches = |current: SystemProxyState, original: &SystemProxyState| {
             current == expected
                 || restoring
-                    && if original.enabled {
-                        current == *original
-                    } else {
-                        // networksetup retains the server/port when disabling a proxy.
-                        !current.enabled
-                    }
+                    && (current.enabled == original.enabled || current.enabled == expected.enabled)
+                    && (current.server == original.server || current.server == expected.server)
+                    && (current.port == original.port || current.port == expected.port)
         };
         Ok(matches(
             get_proxy_state(self.command.as_ref(), &snapshot.service, "-getwebproxy")?,
@@ -174,6 +171,20 @@ impl SystemProxyBackend for MacOsSystemProxyBackend {
             )?,
             &snapshot.secure_web,
         ))
+    }
+
+    fn is_original(&self, snapshot: &Value) -> Result<bool, AppError> {
+        let original: MacOsProxySnapshot =
+            serde_json::from_value(snapshot.clone()).map_err(snapshot_error)?;
+        Ok(
+            get_proxy_state(self.command.as_ref(), &original.service, "-getwebproxy")?
+                == original.web
+                && get_proxy_state(
+                    self.command.as_ref(),
+                    &original.service,
+                    "-getsecurewebproxy",
+                )? == original.secure_web,
+        )
     }
 
     fn restore(&self, snapshot: &Value) -> Result<(), AppError> {
@@ -353,6 +364,58 @@ mod tests {
             command: Arc::new(move |program, arguments| commands.run(program, arguments)),
         };
         SystemProxyManager::new(store, Arc::new(backend))
+    }
+
+    #[test]
+    fn partial_enable_recovers_after_restart_without_accepting_third_values() {
+        for conflict in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("recovery.sqlite");
+            let store = Arc::new(Store::open(&path, 100, 1024).unwrap());
+            let commands = Arc::new(FakeNetworkSetup::new());
+            *commands.fail_https_restore.lock().unwrap() = false;
+            let fake = commands.clone();
+            let backend = MacOsSystemProxyBackend {
+                store: store.clone(),
+                command: Arc::new(move |program, arguments| {
+                    let result = fake.run(program, arguments)?;
+                    if arguments[0] == "-setwebproxy" {
+                        panic!("simulated exit after first platform write");
+                    }
+                    Ok(result)
+                }),
+            };
+            let first = SystemProxyManager::new(store.clone(), Arc::new(backend));
+            assert!(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| first.enable(8888)))
+                    .is_err()
+            );
+            let saved: Value =
+                serde_json::from_str(&store.get_setting(SNAPSHOT_KEY).unwrap().unwrap()).unwrap();
+            assert_eq!(saved["engaging"], true);
+            drop(first);
+            drop(store);
+            if conflict {
+                commands.states.lock().unwrap()[0].server = "external-proxy".into();
+            }
+            let restarted = manager_with_commands(
+                Arc::new(Store::open(&path, 100, 1024).unwrap()),
+                commands.clone(),
+            );
+            let before = commands.states.lock().unwrap().clone();
+            if conflict {
+                assert_eq!(
+                    restarted.restore().unwrap_err().code,
+                    "SYSTEM_PROXY_CONFLICT"
+                );
+                assert_eq!(*commands.states.lock().unwrap(), before);
+                assert!(restarted.is_managed().unwrap());
+            } else {
+                restarted.restore().unwrap();
+                assert!(!restarted.is_managed().unwrap());
+                assert!(!commands.states.lock().unwrap()[0].enabled);
+            }
+        }
     }
 
     #[test]

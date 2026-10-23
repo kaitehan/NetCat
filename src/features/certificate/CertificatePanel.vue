@@ -2,13 +2,14 @@
 import { computed } from 'vue'
 import { CheckCircle2, Download, KeyRound, Smartphone, X } from '@lucide/vue'
 import QrcodeVue from 'qrcode.vue'
-import type { CaStatus, CertificateTrustState, PlatformInfo, ProxyStatus } from '../../shared/types'
+import type { CaStatus, CaPrivateKeyState, CertificateTrustState, PlatformInfo, ProxyStatus } from '../../shared/types'
 
-const { open = true, embedded = false, platform, trustState, caStatus, proxyStatus, allowLan, busy } = defineProps<{
+const { open = true, embedded = false, platform, trustState, privateKeyState, caStatus, proxyStatus, allowLan, busy } = defineProps<{
   open?: boolean
   embedded?: boolean
   platform: PlatformInfo | null
   trustState: CertificateTrustState
+  privateKeyState: CaPrivateKeyState
   caStatus: CaStatus
   proxyStatus: ProxyStatus
   allowLan: boolean
@@ -24,6 +25,12 @@ const emit = defineEmits<{
 }>()
 
 const trustSupported = computed(() => platform?.os === 'windows' && platform.certificateTrustSupported && trustState !== 'unsupported')
+const privateKeyMessage = computed(() => ({
+  ready: 'CA 私钥已就绪',
+  missing: 'CA 私钥缺失，请重新生成本地 CA。',
+  mismatch: 'CA 私钥与公钥证书不匹配，请重新生成本地 CA。',
+  unavailable: 'CA 私钥不可用，请检查私钥访问权限。'
+})[privateKeyState])
 const trustMessage = computed(() => {
   if (!trustSupported.value) {
     return '当前环境不支持自动管理证书信任，请导出证书并手动安装。'
@@ -101,12 +108,13 @@ const healthUrl = computed(() => certificateUrl.value?.replace('/__netcat/ca.crt
           </ol>
         </section>
 
-        <section v-else class="instruction-section">
+        <section v-else-if="platform?.os === 'windows'" class="instruction-section">
           <h3>本机 Windows</h3>
           <p v-if="trustSupported">仅在当前用户的“受信任的根证书颁发机构”中安装或移除当前 CA。</p>
           <p role="status">{{ trustMessage }}</p>
+          <p v-if="caStatus.generated" role="status">{{ privateKeyMessage }}</p>
           <button
-            v-if="trustSupported && caStatus.generated && trustState === 'notTrusted'"
+            v-if="trustSupported && caStatus.generated && trustState === 'notTrusted' && privateKeyState === 'ready'"
             type="button"
             class="primary-button"
             :disabled="busy"
@@ -123,6 +131,10 @@ const healthUrl = computed(() => certificateUrl.value?.replace('/__netcat/ca.crt
           >
             移除信任
           </button>
+        </section>
+
+        <section v-else class="instruction-section">
+          <p role="status">平台信息加载中或暂不可用</p>
         </section>
 
         <section class="instruction-section">

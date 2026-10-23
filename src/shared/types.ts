@@ -21,6 +21,13 @@ export type CertificateTrustState =
   | 'mismatch'
   | 'unavailable'
 
+export type CaPrivateKeyState = 'ready' | 'missing' | 'mismatch' | 'unavailable'
+
+export interface CertificateTrustDetails {
+  publicTrust: CertificateTrustState
+  privateKeyState: CaPrivateKeyState
+}
+
 export interface ProxyConfig {
   port: number
   allowLan: boolean

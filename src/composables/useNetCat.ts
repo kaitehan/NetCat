@@ -3,6 +3,7 @@ import { desktopApi, desktopApiKey, normalizeDesktopError } from '../api/desktop
 import type {
   AppError,
   CaStatus,
+  CaPrivateKeyState,
   CertificateTrustState,
   DiagnosticLog,
   MockRule,
@@ -42,6 +43,7 @@ export function useNetCat() {
   const caStatus = shallowRef<CaStatus>({ generated: false, certificatePath: null, fingerprint: null })
   const platform = shallowRef<PlatformInfo | null>(null)
   const trustState = shallowRef<CertificateTrustState>('unavailable')
+  const privateKeyState = shallowRef<CaPrivateKeyState>('unavailable')
   const systemProxyStatus = shallowRef<SystemProxyStatus>({ managed: false, recoveryPending: false, conflict: false })
   const systemProxyEnabled = computed(() => systemProxyStatus.value.managed && !systemProxyStatus.value.conflict)
   const systemProxyPreferred = shallowRef(true)
@@ -67,14 +69,20 @@ export function useNetCat() {
         api.getProxyStatus(),
         api.listTraffic(),
         api.listMockRules(),
-        api.getCaStatus(),
+        api.getCaStatus().catch((cause) => {
+          error.value = normalizeDesktopError(cause)
+          return caStatus.value
+        }),
         api.getSystemProxyStatus().catch((cause) => {
           error.value = normalizeDesktopError(cause)
           return { managed: false, recoveryPending: false, conflict: false }
         }),
         api.hasAcceptedDisclaimer(),
         api.getPlatformInfo(),
-        api.getCertificateTrustStatus()
+        api.getCertificateTrustDetails().catch((cause) => {
+          error.value = normalizeDesktopError(cause)
+          return { publicTrust: 'unavailable', privateKeyState: 'unavailable' } as const
+        })
       ])
       proxyStatus.value = status
       port.value = status.port
@@ -83,7 +91,8 @@ export function useNetCat() {
       caStatus.value = certificate
       systemProxyStatus.value = systemProxy
       platform.value = platformInfo
-      trustState.value = certificateTrust
+      trustState.value = certificateTrust.publicTrust
+      privateKeyState.value = certificateTrust.privateKeyState
       disclaimerAccepted.value = disclaimer
       unlisteners.push(await api.listen<ProxyStatus>('proxy-status-changed', (payload) => {
         proxyStatus.value = payload
@@ -305,8 +314,17 @@ export function useNetCat() {
   async function generateCa() {
     await runAction(async () => {
       caStatus.value = await api.generateCa()
-      trustState.value = await api.getCertificateTrustStatus()
+      await refreshCertificateTrust()
     })
+  }
+
+  async function refreshCertificateTrust() {
+    const details = await api.getCertificateTrustDetails().catch((cause) => {
+      error.value = normalizeDesktopError(cause)
+      return { publicTrust: 'unavailable', privateKeyState: 'unavailable' } as const
+    })
+    trustState.value = details.publicTrust
+    privateKeyState.value = details.privateKeyState
   }
 
   function canManageCaTrust() {
@@ -315,7 +333,7 @@ export function useNetCat() {
   }
 
   async function trustCa() {
-    if (!canManageCaTrust() || trustState.value !== 'notTrusted') {
+    if (!canManageCaTrust() || trustState.value !== 'notTrusted' || privateKeyState.value !== 'ready') {
       return
     }
     await runAction(async () => {
@@ -328,7 +346,8 @@ export function useNetCat() {
       return
     }
     await runAction(async () => {
-      trustState.value = await api.removeCaTrust()
+      await api.removeCaTrust()
+      await refreshCertificateTrust()
     })
   }
 
@@ -388,6 +407,7 @@ export function useNetCat() {
     caStatus: readonly(caStatus),
     platform: readonly(platform),
     trustState: readonly(trustState),
+    privateKeyState: readonly(privateKeyState),
     systemProxyStatus: readonly(systemProxyStatus),
     systemProxyEnabled: readonly(systemProxyEnabled),
     systemProxyPreferred: readonly(systemProxyPreferred),

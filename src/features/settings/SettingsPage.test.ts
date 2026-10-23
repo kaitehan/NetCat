@@ -5,6 +5,7 @@ import SettingsPage from './SettingsPage.vue'
 const props = {
   platform: { os: 'windows' as const, version: '10.0.19045', arch: 'x86_64', certificateTrustSupported: true },
   trustState: 'notTrusted' as const,
+  privateKeyState: 'ready' as const,
   systemProxyStatus: { managed: false, recoveryPending: false, conflict: false },
   proxyStatus: {
     state: 'stopped' as const,

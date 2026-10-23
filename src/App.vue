@@ -396,6 +396,7 @@ onMounted(() => void capture.initialize())
           v-else
           :platform="capture.platform.value"
           :trust-state="capture.trustState.value"
+          :private-key-state="capture.privateKeyState.value"
           :system-proxy-status="capture.systemProxyStatus.value"
           :proxy-status="capture.proxyStatus.value"
           :port="capture.port.value"

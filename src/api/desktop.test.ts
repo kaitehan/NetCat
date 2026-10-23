@@ -33,6 +33,7 @@ describe('desktopApi native platform commands', () => {
     ['getPlatformInfo', 'get_platform_info', { os: 'windows', version: '10.0.19045', arch: 'x86_64', certificateTrustSupported: true }],
     ['getSystemProxyStatus', 'get_system_proxy_status', { managed: false, recoveryPending: true, conflict: true }],
     ['getCertificateTrustStatus', 'get_certificate_trust_status', 'notTrusted'],
+    ['getCertificateTrustDetails', 'get_certificate_trust_details', { publicTrust: 'trusted', privateKeyState: 'missing' }],
     ['installCaTrust', 'install_ca_trust', 'trusted'],
     ['removeCaTrust', 'remove_ca_trust', 'notTrusted']
   ] as const)('maps %s to its native command and preserves the result', async (method, command, response) => {

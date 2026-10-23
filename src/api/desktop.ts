@@ -7,6 +7,7 @@ import type {
   AppError,
   CaStatus,
   CertificateTrustState,
+  CertificateTrustDetails,
   DiagnosticLog,
   MockRule,
   MockRuleTestResult,
@@ -34,6 +35,7 @@ export interface DesktopApi {
   getPlatformInfo(): Promise<PlatformInfo>
   getSystemProxyStatus(): Promise<SystemProxyStatus>
   getCertificateTrustStatus(): Promise<CertificateTrustState>
+  getCertificateTrustDetails(): Promise<CertificateTrustDetails>
   installCaTrust(): Promise<CertificateTrustState>
   removeCaTrust(): Promise<CertificateTrustState>
   getProxyStatus(): Promise<ProxyStatus>
@@ -165,6 +167,9 @@ const browserApi: DesktopApi = {
   },
   async getCertificateTrustStatus() {
     return 'unsupported'
+  },
+  async getCertificateTrustDetails() {
+    return { publicTrust: 'unsupported', privateKeyState: 'unavailable' }
   },
   async installCaTrust() {
     return 'unsupported'
@@ -362,6 +367,7 @@ const tauriApi: DesktopApi = {
   getPlatformInfo: () => invoke('get_platform_info'),
   getSystemProxyStatus: () => invoke('get_system_proxy_status'),
   getCertificateTrustStatus: () => invoke('get_certificate_trust_status'),
+  getCertificateTrustDetails: () => invoke('get_certificate_trust_details'),
   installCaTrust: () => invoke('install_ca_trust'),
   removeCaTrust: () => invoke('remove_ca_trust'),
   getProxyStatus: () => invoke('get_proxy_status'),

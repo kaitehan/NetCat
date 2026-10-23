@@ -94,6 +94,10 @@ impl SystemProxyBackend for WindowsSystemProxyBackend {
             && current.auto_detect == original.auto_detect)
     }
 
+    fn finish_restore(&self) -> Result<(), AppError> {
+        self.registry.notify()
+    }
+
     fn restore(&self, snapshot: &Value) -> Result<(), AppError> {
         let original: WindowsProxyConfiguration =
             serde_json::from_value(snapshot.clone()).map_err(snapshot_error)?;
@@ -239,6 +243,7 @@ mod tests {
         notifications: Mutex<usize>,
         fail_notifications: Mutex<usize>,
         fail_write: Mutex<Option<&'static str>>,
+        crash_after_enable: std::sync::atomic::AtomicBool,
     }
 
     impl MemoryInternetSettings {
@@ -300,6 +305,15 @@ mod tests {
                 }
                 _ => panic!("unexpected registry value {name}"),
             }
+            drop(values);
+            drop(fail);
+            if name == "ProxyEnable"
+                && self
+                    .crash_after_enable
+                    .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                panic!("simulated process exit after first platform write");
+            }
             Ok(())
         }
 
@@ -327,6 +341,70 @@ mod tests {
 
     fn manager(registry: Arc<MemoryInternetSettings>, store: Arc<Store>) -> SystemProxyManager {
         SystemProxyManager::new(store, Arc::new(WindowsSystemProxyBackend::new(registry)))
+    }
+
+    #[test]
+    fn partial_enable_survives_restart_and_preserves_third_values() {
+        for conflict in [false, true] {
+            let registry = MemoryInternetSettings::from(original());
+            registry
+                .crash_after_enable
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("recovery.sqlite");
+            let store = Arc::new(Store::open(&path, 100, 1024).unwrap());
+            let first = manager(registry.clone(), store.clone());
+            assert!(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| first.enable(28086)))
+                    .is_err()
+            );
+            let saved: Value = serde_json::from_str(
+                &store
+                    .get_setting(crate::system_proxy::SNAPSHOT_KEY)
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(saved["engaging"], true);
+            assert_eq!(registry.read().unwrap().proxy_enable, Some(1));
+            drop(first);
+            drop(store);
+            if conflict {
+                registry.values.lock().unwrap().proxy_server = Some("external:9090".into());
+            }
+            let writes = *registry.writes.lock().unwrap();
+            let restarted = manager(
+                registry.clone(),
+                Arc::new(Store::open(&path, 100, 1024).unwrap()),
+            );
+            if conflict {
+                assert_eq!(
+                    restarted.restore().unwrap_err().code,
+                    "SYSTEM_PROXY_CONFLICT"
+                );
+                assert_eq!(*registry.writes.lock().unwrap(), writes);
+                assert!(restarted.is_managed().unwrap());
+            } else {
+                restarted.restore().unwrap();
+                assert_eq!(registry.read().unwrap(), original());
+                assert!(!restarted.is_managed().unwrap());
+            }
+        }
+    }
+
+    #[test]
+    fn manual_restore_completes_recovery_without_registry_writes() {
+        let registry = MemoryInternetSettings::from(original());
+        let store = Arc::new(Store::open_in_memory(100, 1024).unwrap());
+        let first = manager(registry.clone(), store.clone());
+        first.enable(28086).unwrap();
+        *registry.values.lock().unwrap() = original();
+        let writes = *registry.writes.lock().unwrap();
+        let restarted = manager(registry.clone(), store);
+        restarted.restore().unwrap();
+        assert_eq!(*registry.writes.lock().unwrap(), writes);
+        assert!(!restarted.is_managed().unwrap());
+        restarted.enable(28087).unwrap();
     }
 
     #[test]

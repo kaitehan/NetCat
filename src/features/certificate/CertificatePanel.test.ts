@@ -5,9 +5,31 @@ import CertificatePanel from './CertificatePanel.vue'
 const platform = { os: 'windows' as const, version: '10.0.19045', arch: 'x86_64', certificateTrustSupported: true }
 const generatedCa = { generated: true, certificatePath: 'C:\\NetCat\\ca.crt', fingerprint: 'AA:BB' }
 const stoppedStatus = { state: 'stopped' as const, bindAddress: null, port: 28086, lanIp: null, error: null }
-const windowsProps = { platform, trustState: 'notTrusted' as const, caStatus: generatedCa, proxyStatus: stoppedStatus, allowLan: false, busy: false }
+const windowsProps = { platform, trustState: 'notTrusted' as const, privateKeyState: 'ready' as const, caStatus: generatedCa, proxyStatus: stoppedStatus, allowLan: false, busy: false }
 
 describe('CertificatePanel', () => {
+  it.each(['missing', 'mismatch', 'unavailable'] as const)('shows trusted public identity and permits only removal when the private key is %s', (privateKeyState) => {
+    render(CertificatePanel, { props: { ...windowsProps, trustState: 'trusted', privateKeyState } })
+    expect(screen.getByText('当前 CA 已信任')).toBeVisible()
+    expect(screen.getByText(/CA 私钥/)).toBeVisible()
+    expect(screen.getByRole('button', { name: '移除信任' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: '安装信任' })).not.toBeInTheDocument()
+  })
+
+  it.each(['missing', 'mismatch', 'unavailable'] as const)('never offers trust mutation for an untrusted public certificate with a %s private key', (privateKeyState) => {
+    render(CertificatePanel, { props: { ...windowsProps, privateKeyState } })
+    expect(screen.getByText('当前 CA 尚未信任')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '移除信任' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '安装信任' })).not.toBeInTheDocument()
+  })
+
+  it('shows neutral unavailable platform copy until platform information is ready', () => {
+    render(CertificatePanel, { props: { ...windowsProps, platform: null } })
+    expect(screen.getByText('平台信息加载中或暂不可用')).toBeVisible()
+    expect(screen.queryByRole('heading', { name: '本机 Windows' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '安装信任' })).not.toBeInTheDocument()
+  })
+
   it('offers current-user trust installation on Windows only after an explicit click', async () => {
     const { emitted } = render(CertificatePanel, { props: windowsProps })
 
@@ -32,7 +54,7 @@ describe('CertificatePanel', () => {
     ['mismatch', true, '证书指纹不匹配'],
     ['unavailable', true, '无法读取证书信任状态'],
     ['unsupported', true, '当前环境不支持自动管理证书信任']
-  ] as const)('explains %s without allowing trust mutations', (trustState, generated, message) => {
+  ] as const)('explains %s without allowing trust installation', (trustState, generated, message) => {
     render(CertificatePanel, { props: { ...windowsProps, trustState, caStatus: { ...generatedCa, generated } } })
     expect(screen.getByText(message, { exact: false })).toBeVisible()
     expect(screen.queryByRole('button', { name: '安装信任' })).not.toBeInTheDocument()
@@ -65,6 +87,7 @@ describe('CertificatePanel', () => {
       props: {
         platform: { ...platform, os: 'macos', certificateTrustSupported: false },
         trustState: 'unsupported',
+        privateKeyState: 'ready',
         open: true,
         caStatus: {
           generated: true,

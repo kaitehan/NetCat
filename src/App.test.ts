@@ -32,6 +32,7 @@ function platformApi() {
     getPlatformInfo: vi.fn().mockResolvedValue({ os: 'macos', version: '15', arch: 'arm64', certificateTrustSupported: false }),
     getSystemProxyStatus: vi.fn().mockResolvedValue({ managed: false, recoveryPending: false, conflict: false }),
     getCertificateTrustStatus: vi.fn().mockResolvedValue('unsupported'),
+    getCertificateTrustDetails: vi.fn().mockResolvedValue({ publicTrust: 'unsupported', privateKeyState: 'unavailable' }),
     installCaTrust: vi.fn(),
     removeCaTrust: vi.fn()
   }
@@ -45,6 +46,7 @@ function windowsApi(): DesktopApi {
     getCaStatus: vi.fn().mockResolvedValue({ generated: true, certificatePath: 'C:\\NetCat\\ca.crt', fingerprint: 'AA' }),
     getSystemProxyStatus: vi.fn().mockResolvedValue({ managed: false, recoveryPending: false, conflict: false }),
     getCertificateTrustStatus: vi.fn().mockResolvedValue('notTrusted'),
+    getCertificateTrustDetails: vi.fn().mockResolvedValue({ publicTrust: 'notTrusted', privateKeyState: 'ready' }),
     installCaTrust: vi.fn().mockResolvedValue('trusted'),
     removeCaTrust: vi.fn().mockResolvedValue('notTrusted'),
     listTraffic: vi.fn().mockResolvedValue([]),
@@ -59,6 +61,51 @@ function renderWithApi(api: DesktopApi) {
 }
 
 describe('App', () => {
+  it.each([
+    ['getCaStatus', 'CA_KEY_MISMATCH'],
+    ['getCaStatus', 'CA_KEY_UNAVAILABLE'],
+    ['getCertificateTrustDetails', 'CA_KEY_MISMATCH'],
+    ['getCertificateTrustDetails', 'CA_KEY_UNAVAILABLE']
+  ] as const)('keeps core initialization and events when %s fails with %s', async (method, code) => {
+    const api = windowsApi()
+    const handlers = new Map<string, (payload: unknown) => void>()
+    vi.mocked(api[method]).mockRejectedValue({ code, message: '本地 CA 不可用' })
+    vi.mocked(api.getProxyStatus).mockResolvedValue({ ...status, state: 'running', port: 8888 })
+    vi.mocked(api.listTraffic).mockResolvedValue([row])
+    api.listen = vi.fn(async (event: string, handler: (payload: unknown) => void) => {
+      handlers.set(event, handler)
+      return () => handlers.delete(event)
+    })
+    renderWithApi(api)
+    expect(await screen.findByText('本地 CA 不可用')).toBeVisible()
+    expect(await screen.findByRole('button', { name: '停止代理' })).toBeVisible()
+    expect(await screen.findByRole('button', { name: '展开 api.example.com 分组' })).toBeVisible()
+    expect(screen.queryByRole('dialog', { name: /使用声明/ })).not.toBeInTheDocument()
+    await waitFor(() => expect(handlers.has('diagnostic-log')).toBe(true))
+    handlers.get('proxy-status-changed')?.(status)
+    expect(await screen.findByRole('button', { name: '启动代理' })).toBeVisible()
+    await fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    expect(await screen.findByRole('spinbutton', { name: '代理端口' })).toHaveValue(8888)
+    await fireEvent.click(screen.getByRole('tab', { name: '证书配置' }))
+    expect(screen.getByRole('heading', { name: '本机 Windows' })).toBeVisible()
+  })
+
+  it.each(['missing', 'mismatch', 'unavailable'] as const)('allows explicit removal of a confirmed trusted certificate when the private key is %s', async (privateKey) => {
+    const api = windowsApi()
+    vi.mocked(api.getCertificateTrustDetails)
+      .mockResolvedValueOnce({ publicTrust: 'trusted', privateKeyState: privateKey })
+      .mockResolvedValue({ publicTrust: 'notTrusted', privateKeyState: privateKey })
+    renderWithApi(api)
+    await fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    await fireEvent.click(await screen.findByRole('tab', { name: '证书配置' }))
+    await fireEvent.click(await screen.findByRole('button', { name: '移除信任' }))
+    await waitFor(() => expect(api.removeCaTrust).toHaveBeenCalledOnce())
+    expect(await screen.findByText('当前 CA 尚未信任')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '安装信任' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '移除信任' })).not.toBeInTheDocument()
+    expect(api.installCaTrust).not.toHaveBeenCalled()
+  })
+
   it.each([false, true])('keeps the system proxy checkbox unchecked after an enable failure (conflict=%s)', async (conflict) => {
     const api = windowsApi()
     vi.mocked(api.getProxyStatus).mockResolvedValue({ ...status, state: 'running' })
@@ -111,7 +158,7 @@ describe('App', () => {
   it('loads Windows trust state and changes it only through explicit trust buttons', async () => {
     const api = windowsApi()
     renderWithApi(api)
-    await waitFor(() => expect(api.getCertificateTrustStatus).toHaveBeenCalledOnce())
+    await waitFor(() => expect(api.getCertificateTrustDetails).toHaveBeenCalledOnce())
     expect(api.installCaTrust).not.toHaveBeenCalled()
     expect(api.removeCaTrust).not.toHaveBeenCalled()
     await fireEvent.click(screen.getByRole('button', { name: '设置' }))
@@ -119,7 +166,7 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: '安装信任' }))
     expect(await screen.findByText('当前 CA 已信任')).toBeVisible()
     await fireEvent.click(screen.getByRole('button', { name: '移除信任' }))
-    expect(await screen.findByRole('button', { name: '安装信任' })).toBeEnabled()
+    await waitFor(() => expect(screen.getByRole('button', { name: '安装信任' })).toBeEnabled())
     expect(api.installCaTrust).toHaveBeenCalledOnce()
     expect(api.removeCaTrust).toHaveBeenCalledOnce()
   })
@@ -127,13 +174,13 @@ describe('App', () => {
   it('rechecks trust after generating a CA without automatically installing trust', async () => {
     const api = windowsApi()
     vi.mocked(api.getCaStatus).mockResolvedValue({ generated: false, certificatePath: null, fingerprint: null })
-    vi.mocked(api.getCertificateTrustStatus).mockResolvedValueOnce('notGenerated').mockResolvedValue('notTrusted')
+    vi.mocked(api.getCertificateTrustDetails).mockResolvedValueOnce({ publicTrust: 'notGenerated', privateKeyState: 'missing' }).mockResolvedValue({ publicTrust: 'notTrusted', privateKeyState: 'ready' })
     api.generateCa = vi.fn().mockResolvedValue({ generated: true, certificatePath: 'C:\\NetCat\\ca.crt', fingerprint: 'AA' })
     renderWithApi(api)
     await fireEvent.click(screen.getByRole('button', { name: '设置' }))
     await fireEvent.click(await screen.findByRole('tab', { name: '证书配置' }))
     await fireEvent.click(await screen.findByRole('button', { name: '生成证书' }))
-    expect(await screen.findByRole('button', { name: '安装信任' })).toBeEnabled()
+    await waitFor(() => expect(screen.getByRole('button', { name: '安装信任' })).toBeEnabled())
     expect(api.installCaTrust).not.toHaveBeenCalled()
   })
 

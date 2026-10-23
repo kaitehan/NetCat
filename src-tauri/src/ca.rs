@@ -2,7 +2,7 @@ use std::{fs, path::PathBuf, sync::Arc};
 
 use hudsucker::rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, ExtendedKeyUsagePurpose, IsCa,
-    Issuer, KeyPair, KeyUsagePurpose,
+    Issuer, KeyPair, KeyUsagePurpose, PublicKeyData,
 };
 use sha2::{Digest, Sha256};
 
@@ -55,7 +55,7 @@ impl CaManager {
 
     pub fn status(&self) -> Result<CaStatus, AppError> {
         let path = self.certificate_path();
-        if !path.exists() || self.secrets.load_private_key()?.is_none() {
+        if !path.try_exists().map_err(file_error)? {
             return Ok(CaStatus {
                 generated: false,
                 certificate_path: None,
@@ -73,18 +73,70 @@ impl CaManager {
 
     pub fn load_issuer(&self) -> Result<Issuer<'static, KeyPair>, AppError> {
         let certificate_pem = fs::read_to_string(self.certificate_path()).map_err(file_error)?;
-        let private_key_pem = self.secrets.load_private_key()?.ok_or_else(|| {
-            AppError::new("CA_KEY_MISSING", "钥匙串中找不到 CA 私钥")
-                .with_action("请重新生成本地 CA")
-        })?;
-        let key_pair = KeyPair::from_pem(&private_key_pem).map_err(certificate_error)?;
+        let key_pair = self.matching_key_pair(&certificate_pem)?;
         Issuer::from_ca_cert_pem(&certificate_pem, key_pair).map_err(certificate_error)
+    }
+
+    pub fn check_private_key(&self) -> Result<(), AppError> {
+        let certificate_pem = fs::read_to_string(self.certificate_path()).map_err(file_error)?;
+        self.matching_key_pair(&certificate_pem).map(|_| ())
+    }
+
+    pub fn private_key_state(&self) -> crate::platform::CaPrivateKeyState {
+        use crate::platform::CaPrivateKeyState::*;
+        let private_key = match self.secrets.load_private_key() {
+            Ok(Some(key)) => key,
+            Ok(None) => return Missing,
+            Err(_) => return Unavailable,
+        };
+        let certificate = match fs::read_to_string(self.certificate_path()) {
+            Ok(certificate) => certificate,
+            Err(_) => return Unavailable,
+        };
+        match matching_key_pair(&certificate, &private_key) {
+            Ok(_) => Ready,
+            Err(error) if error.code == "CA_KEY_MISMATCH" => Mismatch,
+            Err(_) => Unavailable,
+        }
+    }
+
+    fn matching_key_pair(&self, certificate_pem: &str) -> Result<KeyPair, AppError> {
+        let unavailable = || {
+            AppError::new("CA_KEY_UNAVAILABLE", "无法读取受保护的 CA 私钥")
+                .with_action("请检查私钥访问权限或重新生成本地 CA")
+        };
+        let mismatch = || {
+            AppError::new("CA_KEY_MISMATCH", "CA 证书与私钥不匹配或私钥缺失")
+                .with_action("请重新生成本地 CA")
+        };
+        let private_key = self
+            .secrets
+            .load_private_key()
+            .map_err(|_| unavailable())?
+            .ok_or_else(mismatch)?;
+        matching_key_pair(certificate_pem, &private_key)
     }
 
     pub fn export_public_certificate(&self, destination: PathBuf) -> Result<(), AppError> {
         fs::copy(self.certificate_path(), destination).map_err(file_error)?;
         Ok(())
     }
+}
+
+fn matching_key_pair(certificate_pem: &str, private_key_pem: &str) -> Result<KeyPair, AppError> {
+    let key = KeyPair::from_pem(private_key_pem)
+        .map_err(|_| AppError::new("CA_KEY_UNAVAILABLE", "无法读取受保护的 CA 私钥"))?;
+    let der = crate::platform::certificate_der(certificate_pem.as_bytes())?;
+    let (remaining, certificate) = x509_parser::parse_x509_certificate(&der)
+        .map_err(|_| AppError::new("CA_CERTIFICATE_INVALID", "CA 公钥证书无效"))?;
+    if !remaining.is_empty() {
+        return Err(AppError::new("CA_CERTIFICATE_INVALID", "CA 公钥证书无效"));
+    }
+    if certificate.public_key().raw != key.subject_public_key_info() {
+        return Err(AppError::new("CA_KEY_MISMATCH", "CA 证书与私钥不匹配")
+            .with_action("请重新生成本地 CA"));
+    }
+    Ok(key)
 }
 
 fn fingerprint(certificate_pem: &str) -> Result<String, AppError> {
@@ -125,6 +177,43 @@ mod tests {
         fn load_private_key(&self) -> Result<Option<String>, AppError> {
             Ok(self.0.lock().unwrap().clone())
         }
+    }
+
+    #[test]
+    fn issuer_rejects_a_private_key_from_a_different_generated_ca() {
+        let directory = tempfile::tempdir().unwrap();
+        let secrets = Arc::new(MemorySecrets::default());
+        let manager = CaManager::new(directory.path().join("first"), secrets.clone());
+        manager.generate().unwrap();
+        CaManager::new(directory.path().join("second"), secrets)
+            .generate()
+            .unwrap();
+        assert_eq!(manager.load_issuer().err().unwrap().code, "CA_KEY_MISMATCH");
+    }
+
+    #[test]
+    fn public_identity_remains_available_without_a_private_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let secrets = Arc::new(MemorySecrets::default());
+        let manager = CaManager::new(directory.path().to_path_buf(), secrets.clone());
+        let original = manager.generate().unwrap();
+        *secrets.0.lock().unwrap() = None;
+        assert_eq!(manager.status().unwrap().fingerprint, original.fingerprint);
+        assert!(manager.status().unwrap().generated);
+        assert_eq!(manager.load_issuer().err().unwrap().code, "CA_KEY_MISMATCH");
+    }
+
+    #[test]
+    fn malformed_private_key_is_unavailable_and_sanitized() {
+        let directory = tempfile::tempdir().unwrap();
+        let secrets = Arc::new(MemorySecrets::default());
+        let manager = CaManager::new(directory.path().to_path_buf(), secrets.clone());
+        manager.generate().unwrap();
+        *secrets.0.lock().unwrap() = Some("PRIVATE KEY SECRET SENTINEL".into());
+        let error = manager.load_issuer().err().unwrap();
+        assert_eq!(error.code, "CA_KEY_UNAVAILABLE");
+        assert!(error.detail.is_none());
+        assert!(!serde_json::to_string(&error).unwrap().contains("SENTINEL"));
     }
 
     #[test]

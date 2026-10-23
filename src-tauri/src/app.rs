@@ -14,7 +14,7 @@ use crate::{
         MockRuleTestResult, ProxyConfig, ProxyStatus, ReplayDraft, ReplayMode, ReplayRequest,
         ReplayResult, TrafficCopyKind, TrafficDetail, TrafficFilter, TrafficSummary,
     },
-    platform::{CertificateTrustState, PlatformServices},
+    platform::{CertificateTrustDetails, CertificateTrustState, PlatformServices},
     proxy::{ProxyEventSink, ProxyService},
     rules::RuntimeMockRules,
     storage::Store,
@@ -38,6 +38,29 @@ enum TrustOperation {
 
 impl AppState {
     fn certificate_trust(
+        &self,
+        operation: TrustOperation,
+    ) -> Result<CertificateTrustState, AppError> {
+        match operation {
+            TrustOperation::Status => Ok(self.certificate_trust_details()?.summary()),
+            TrustOperation::Install => {
+                if self.platform.info.certificate_trust_supported && self.ca.status()?.generated {
+                    self.ca.check_private_key()?;
+                }
+                self.public_certificate_trust(operation)
+            }
+            TrustOperation::Remove => self.public_certificate_trust(operation),
+        }
+    }
+
+    fn certificate_trust_details(&self) -> Result<CertificateTrustDetails, AppError> {
+        Ok(CertificateTrustDetails {
+            public_trust: self.public_certificate_trust(TrustOperation::Status)?,
+            private_key_state: self.ca.private_key_state(),
+        })
+    }
+
+    fn public_certificate_trust(
         &self,
         operation: TrustOperation,
     ) -> Result<CertificateTrustState, AppError> {
@@ -81,6 +104,13 @@ fn get_certificate_trust_status(
     state: State<'_, AppState>,
 ) -> Result<CertificateTrustState, AppError> {
     state.certificate_trust(TrustOperation::Status)
+}
+
+#[tauri::command]
+fn get_certificate_trust_details(
+    state: State<'_, AppState>,
+) -> Result<CertificateTrustDetails, AppError> {
+    state.certificate_trust_details()
 }
 
 #[tauri::command]
@@ -324,13 +354,33 @@ fn export_diagnostic_bundle(
 }
 
 fn diagnostic_metadata(state: &AppState) -> Result<serde_json::Value, AppError> {
-    let ca = state.ca.status()?;
+    let mut ca = match state.ca.status() {
+        Ok(status) => {
+            serde_json::json!({"generated": status.generated, "fingerprint": status.fingerprint})
+        }
+        Err(_) => {
+            serde_json::json!({"generated": false, "fingerprint": null, "errorCode": "CA_PUBLIC_UNAVAILABLE"})
+        }
+    };
+    match state.certificate_trust_details() {
+        Ok(details) => {
+            ca["trustState"] = serde_json::json!(details.summary());
+            ca["publicTrust"] = serde_json::json!(details.public_trust);
+            ca["privateKeyState"] = serde_json::json!(details.private_key_state);
+        }
+        Err(_) => {
+            ca["trustState"] = serde_json::json!("unavailable");
+            ca["publicTrust"] = serde_json::json!("unavailable");
+            ca["privateKeyState"] = serde_json::json!(state.ca.private_key_state());
+            ca["trustErrorCode"] = serde_json::json!("CA_TRUST_UNAVAILABLE");
+        }
+    }
     let metadata = serde_json::json!({
         "application": { "name": "NetCat", "version": env!("CARGO_PKG_VERSION") },
         "platform": state.platform.info,
         "proxy": state.proxy.status(),
         "systemProxy": state.platform.system_proxy.status()?,
-        "ca": { "generated": ca.generated, "fingerprint": ca.fingerprint },
+        "ca": ca,
         "databaseQuickCheck": state.store.quick_check()?,
         "generatedAt": Utc::now().to_rfc3339(),
     });
@@ -584,6 +634,7 @@ pub fn run() {
             get_platform_info,
             get_system_proxy_status,
             get_certificate_trust_status,
+            get_certificate_trust_details,
             install_ca_trust,
             remove_ca_trust,
             export_ca,
@@ -717,6 +768,198 @@ mod tests {
     }
 
     #[test]
+    fn missing_or_unreadable_key_blocks_install_but_never_public_trust_removal() {
+        use CertificateTrustState::*;
+        for unreadable in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let mut state = fixture_state(directory.path());
+            let public = state.ca.generate().unwrap();
+            assert_eq!(
+                state.certificate_trust(TrustOperation::Install).unwrap(),
+                Trusted
+            );
+            state.ca = if unreadable {
+                CaManager::new(directory.path().to_path_buf(), FailingSecrets)
+            } else {
+                CaManager::new(directory.path().to_path_buf(), MemorySecrets::default())
+            };
+            assert_eq!(state.ca.status().unwrap().fingerprint, public.fingerprint);
+            let details = serde_json::to_value(state.certificate_trust_details().unwrap()).unwrap();
+            assert_eq!(details["publicTrust"], "trusted");
+            assert_eq!(
+                details["privateKeyState"],
+                if unreadable { "unavailable" } else { "missing" }
+            );
+            let metadata = diagnostic_metadata(&state).unwrap();
+            assert_eq!(metadata["ca"]["publicTrust"], "trusted");
+            assert_eq!(
+                metadata["ca"]["privateKeyState"],
+                if unreadable { "unavailable" } else { "missing" }
+            );
+            assert_eq!(
+                state.certificate_trust(TrustOperation::Status).unwrap(),
+                if unreadable { Unavailable } else { Mismatch }
+            );
+            let error = state
+                .certificate_trust(TrustOperation::Install)
+                .unwrap_err();
+            assert_eq!(
+                error.code,
+                if unreadable {
+                    "CA_KEY_UNAVAILABLE"
+                } else {
+                    "CA_KEY_MISMATCH"
+                }
+            );
+            assert!(error.detail.is_none());
+            assert_eq!(
+                state.certificate_trust(TrustOperation::Remove).unwrap(),
+                NotTrusted
+            );
+            let certificate = std::fs::read(state.ca.certificate_path()).unwrap();
+            assert_eq!(
+                state
+                    .platform
+                    .certificate_trust
+                    .status(&certificate, public.fingerprint.as_deref().unwrap())
+                    .unwrap(),
+                NotTrusted
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_key_preserves_public_trust_query_and_explicit_removal() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = fixture_state(directory.path());
+        state.ca.generate().unwrap();
+        state.certificate_trust(TrustOperation::Install).unwrap();
+        state
+            .platform
+            .secrets
+            .save_private_key("PRIVATE KEY SECRET SENTINEL")
+            .unwrap();
+        let details = serde_json::to_value(state.certificate_trust_details().unwrap()).unwrap();
+        assert_eq!(
+            details,
+            serde_json::json!({ "publicTrust": "trusted", "privateKeyState": "unavailable" })
+        );
+        assert_eq!(
+            state.ca.load_issuer().err().unwrap().code,
+            "CA_KEY_UNAVAILABLE"
+        );
+        assert_eq!(
+            state
+                .certificate_trust(TrustOperation::Install)
+                .unwrap_err()
+                .code,
+            "CA_KEY_UNAVAILABLE"
+        );
+        assert_eq!(
+            state.certificate_trust(TrustOperation::Remove).unwrap(),
+            CertificateTrustState::NotTrusted
+        );
+        assert_eq!(
+            state.certificate_trust_details().unwrap().public_trust,
+            CertificateTrustState::NotTrusted
+        );
+    }
+
+    struct FailingCertificateTrust;
+
+    impl crate::platform::CertificateTrust for FailingCertificateTrust {
+        fn status(&self, _: &[u8], _: &str) -> Result<CertificateTrustState, AppError> {
+            Err(AppError::new(
+                "SECRET_SENTINEL",
+                "Cookie Authorization Token PRIVATE KEY SENTINEL",
+            )
+            .with_detail("NC-DPAPI"))
+        }
+        fn install(
+            &self,
+            pem: &[u8],
+            fingerprint: &str,
+        ) -> Result<CertificateTrustState, AppError> {
+            self.status(pem, fingerprint)
+        }
+        fn remove(&self, pem: &[u8], fingerprint: &str) -> Result<CertificateTrustState, AppError> {
+            self.status(pem, fingerprint)
+        }
+    }
+
+    #[test]
+    fn diagnostic_export_retains_only_stable_state_when_trust_query_fails() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(directory.path());
+        state.ca.generate().unwrap();
+        state.platform.certificate_trust = Arc::new(FailingCertificateTrust);
+        let metadata = diagnostic_metadata(&state).unwrap();
+        assert_eq!(metadata["ca"]["publicTrust"], "unavailable");
+        assert_eq!(metadata["ca"]["privateKeyState"], "ready");
+        assert_eq!(metadata["ca"]["trustErrorCode"], "CA_TRUST_UNAVAILABLE");
+        let serialized = metadata.to_string();
+        for sensitive in [
+            "SENTINEL",
+            "Cookie",
+            "Authorization",
+            "Token",
+            "PRIVATE KEY",
+            "NC-DPAPI",
+        ] {
+            assert!(!serialized.contains(sensitive));
+        }
+        assert!(build_diagnostic_archive(metadata, &[]).is_ok());
+    }
+
+    #[test]
+    fn different_ca_private_key_reports_mismatch_and_blocks_install() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(directory.path());
+        state.ca.generate().unwrap();
+        let other = directory.path().join("other");
+        CaManager::new(other, state.platform.secrets.clone())
+            .generate()
+            .unwrap();
+        assert_eq!(
+            state.certificate_trust(TrustOperation::Status).unwrap(),
+            CertificateTrustState::Mismatch
+        );
+        assert_eq!(
+            state
+                .certificate_trust(TrustOperation::Install)
+                .unwrap_err()
+                .code,
+            "CA_KEY_MISMATCH"
+        );
+        // A malformed protected key must also leave public identity readable.
+        state.ca = CaManager::new(directory.path().to_path_buf(), FailingSecrets);
+        assert!(state.ca.status().unwrap().generated);
+    }
+
+    #[test]
+    fn diagnostic_export_survives_unreadable_key_with_only_sanitized_trust_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut state = fixture_state(directory.path());
+        state.ca.generate().unwrap();
+        state.ca = CaManager::new(directory.path().to_path_buf(), FailingSecrets);
+        let metadata = diagnostic_metadata(&state).unwrap();
+        assert_eq!(metadata["ca"]["trustState"], "unavailable");
+        let serialized = metadata.to_string();
+        for secret in [
+            "SENTINEL",
+            "PRIVATE KEY",
+            "BEGIN CERTIFICATE",
+            "NC-DPAPI",
+            "Cookie",
+            "Authorization",
+            "Token",
+        ] {
+            assert!(!serialized.contains(secret));
+        }
+        assert!(build_diagnostic_archive(metadata, &[]).is_ok());
+    }
+
+    #[test]
     fn diagnostic_metadata_uses_platform_info_without_private_certificate_data() {
         let directory = tempfile::tempdir().unwrap();
         let state = fixture_state(directory.path());
@@ -727,10 +970,18 @@ mod tests {
         assert_eq!(metadata["platform"]["os"], "windows");
         assert_eq!(metadata["platform"]["version"], "10.0.22631");
         assert!(metadata["ca"]["fingerprint"].is_string());
+        assert_eq!(metadata["ca"]["trustState"], "notTrusted");
         assert!(metadata.get("macOS").is_none());
-        assert_eq!(metadata["ca"].as_object().unwrap().len(), 2);
+        assert_eq!(metadata["ca"]["publicTrust"], "notTrusted");
+        assert_eq!(metadata["ca"]["privateKeyState"], "ready");
+        assert_eq!(metadata["ca"].as_object().unwrap().len(), 5);
         let serialized = metadata.to_string();
-        for secret in ["PRIVATE KEY", "BEGIN CERTIFICATE", "privateKey", "NC-DPAPI"] {
+        for secret in [
+            "PRIVATE KEY",
+            "BEGIN CERTIFICATE",
+            "\"privateKey\":",
+            "NC-DPAPI",
+        ] {
             assert!(!serialized.contains(secret));
         }
     }
@@ -774,7 +1025,8 @@ mod tests {
         }
 
         fn load_private_key(&self) -> Result<Option<String>, AppError> {
-            Err(AppError::new("KEYCHAIN_ERROR", "钥匙串不可用"))
+            Err(AppError::new("KEYCHAIN_ERROR", "钥匙串不可用")
+                .with_detail("PRIVATE KEY NC-DPAPI SENTINEL"))
         }
     }
 

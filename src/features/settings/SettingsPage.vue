@@ -2,12 +2,13 @@
 import { Bug, Download, Info, Laptop, Pause, Radio, Router, Settings2, ShieldCheck } from '@lucide/vue'
 import { computed, shallowRef } from 'vue'
 import { APP_BRAND } from '../../shared/brand'
-import type { CaStatus, CertificateTrustState, PlatformInfo, ProxyStatus, SystemProxyStatus } from '../../shared/types'
+import type { CaStatus, CaPrivateKeyState, CertificateTrustState, PlatformInfo, ProxyStatus, SystemProxyStatus } from '../../shared/types'
 import CertificatePanel from '../certificate/CertificatePanel.vue'
 
 const {
   platform,
   trustState,
+  privateKeyState,
   systemProxyStatus,
   proxyStatus,
   port,
@@ -20,6 +21,7 @@ const {
 } = defineProps<{
   platform: PlatformInfo | null
   trustState: CertificateTrustState
+  privateKeyState: CaPrivateKeyState
   systemProxyStatus: SystemProxyStatus
   proxyStatus: ProxyStatus
   port: number
@@ -225,6 +227,7 @@ function updateSystemProxy(event: Event) {
         embedded
         :platform="platform"
         :trust-state="trustState"
+        :private-key-state="privateKeyState"
         :ca-status="caStatus"
         :proxy-status="proxyStatus"
         :allow-lan="allowLan"

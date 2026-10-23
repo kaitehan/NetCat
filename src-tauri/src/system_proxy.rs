@@ -23,6 +23,8 @@ struct ProxySnapshot {
     payload: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     restoring: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    engaging: Option<bool>,
 }
 
 pub struct SystemProxyManager {
@@ -54,28 +56,42 @@ impl SystemProxyManager {
             port,
             payload: self.backend.capture()?,
             restoring: None,
+            engaging: Some(true),
         };
         let payload = serde_json::to_string(&snapshot).map_err(|error| {
             AppError::new("SYSTEM_PROXY_ERROR", "无法保存系统代理原配置")
                 .with_detail(error.to_string())
         })?;
         self.store.set_setting(SNAPSHOT_KEY, &payload)?;
-        let applied = self.backend.apply(port).and_then(|_| {
-            if self.backend.is_managed(port)? {
-                Ok(())
-            } else {
-                Err(AppError::new("SYSTEM_PROXY_ERROR", "系统代理配置校验失败"))
-            }
-        });
+        let applied = self
+            .backend
+            .apply(port)
+            .and_then(|_| {
+                if self.backend.is_managed(port)? {
+                    Ok(())
+                } else {
+                    Err(AppError::new("SYSTEM_PROXY_ERROR", "系统代理配置校验失败"))
+                }
+            })
+            .and_then(|_| {
+                snapshot.engaging = None;
+                self.save_snapshot(&snapshot)
+            });
         if let Err(error) = applied {
-            // A failed apply may leave only one protocol configured. Roll back
-            // directly rather than applying the user-change guard to partial state.
-            // Try to record recovery progress, but a storage failure must not
-            // prevent the immediate best-effort rollback of OS changes.
-            let _ = self.mark_restoring(&mut snapshot);
-            if self.backend.restore(&snapshot.payload).is_ok() {
-                self.store.delete_setting(SNAPSHOT_KEY)?;
+            // An interrupted apply can contain original/managed field mixtures,
+            // but a third value belongs to somebody else and must never be written over.
+            if !self.backend.can_restore(&snapshot.payload, port, true)? {
+                return Err(proxy_conflict());
             }
+            self.mark_restoring(&mut snapshot)?;
+            self.backend.restore(&snapshot.payload).map_err(|_| {
+                AppError::new(
+                    "SYSTEM_PROXY_RESTORE_ERROR",
+                    "系统代理回滚未完成，已保留恢复记录",
+                )
+                .with_action("请检查系统代理设置后重试恢复")
+            })?;
+            self.store.delete_setting(SNAPSHOT_KEY)?;
             return Err(error);
         }
         Ok(())
@@ -105,16 +121,19 @@ impl SystemProxyManager {
                     "系统代理恢复记录不适用于当前平台",
                 ));
             }
+            if self.backend.is_original(&snapshot.payload)? {
+                if snapshot.restoring.unwrap_or(false) {
+                    self.backend.finish_restore()?;
+                }
+                self.store.delete_setting(SNAPSHOT_KEY)?;
+                return Ok(());
+            }
             if !self.backend.can_restore(
                 &snapshot.payload,
                 snapshot.port,
-                snapshot.restoring.unwrap_or(false),
+                snapshot.restoring.unwrap_or(false) || snapshot.engaging.unwrap_or(false),
             )? {
-                return Err(AppError::new(
-                    "SYSTEM_PROXY_CONFLICT",
-                    "系统代理已被修改，无法自动恢复",
-                )
-                .with_action("请检查系统代理设置后重试"));
+                return Err(proxy_conflict());
             }
             // Persist the phase before the first OS write. A retry after a
             // partial restore (including after restart) can recognize progress.
@@ -160,22 +179,33 @@ impl SystemProxyManager {
         Ok(crate::models::SystemProxyStatus {
             managed: self.backend.is_managed(snapshot.port)?,
             recovery_pending: true,
-            conflict: !self.backend.can_restore(
-                &snapshot.payload,
-                snapshot.port,
-                snapshot.restoring.unwrap_or(false),
-            )?,
+            conflict: !self.backend.is_original(&snapshot.payload)?
+                && !self.backend.can_restore(
+                    &snapshot.payload,
+                    snapshot.port,
+                    snapshot.restoring.unwrap_or(false) || snapshot.engaging.unwrap_or(false),
+                )?,
         })
     }
 
     fn mark_restoring(&self, snapshot: &mut ProxySnapshot) -> Result<(), AppError> {
         snapshot.restoring = Some(true);
+        snapshot.engaging = None;
+        self.save_snapshot(snapshot)
+    }
+
+    fn save_snapshot(&self, snapshot: &ProxySnapshot) -> Result<(), AppError> {
         let payload = serde_json::to_string(snapshot).map_err(|error| {
             AppError::new("SYSTEM_PROXY_RESTORE_ERROR", "无法保存系统代理恢复进度")
                 .with_detail(error.to_string())
         })?;
         self.store.set_setting(SNAPSHOT_KEY, &payload)
     }
+}
+
+fn proxy_conflict() -> AppError {
+    AppError::new("SYSTEM_PROXY_CONFLICT", "系统代理已被修改，无法自动恢复")
+        .with_action("请检查系统代理设置后重试")
 }
 
 pub fn parse_default_interface(output: &str) -> Option<String> {
@@ -240,6 +270,7 @@ mod tests {
         state: Mutex<Value>,
         fail_apply: bool,
         fail_validation: bool,
+        change_before_validation: bool,
         fail_restore: bool,
         restores: Mutex<usize>,
     }
@@ -273,8 +304,22 @@ mod tests {
         }
 
         fn is_managed(&self, port: u16) -> Result<bool, AppError> {
+            if self.change_before_validation {
+                self.set_external_change();
+            }
             Ok(!self.fail_validation
                 && *self.state.lock().unwrap() == json!({"server": "127.0.0.1", "port": port}))
+        }
+
+        fn can_restore(
+            &self,
+            original: &Value,
+            port: u16,
+            partial: bool,
+        ) -> Result<bool, AppError> {
+            let current = self.capture()?;
+            Ok(current == json!({"server": "127.0.0.1", "port": port})
+                || partial && current == *original)
         }
 
         fn restore(&self, snapshot: &Value) -> Result<(), AppError> {
@@ -330,6 +375,39 @@ mod tests {
             fixture.manager.enable(8888).unwrap();
             fixture
         }
+    }
+
+    #[test]
+    fn verification_conflict_never_overwrites_external_change() {
+        let fixture = ProxyFixture::new(false, false, false);
+        let backend = Arc::new(FakeProxyBackend {
+            platform: "fake",
+            state: Mutex::new(json!({"server": "original-proxy", "port": 3128})),
+            change_before_validation: true,
+            ..Default::default()
+        });
+        let manager = SystemProxyManager::new(fixture.store.clone(), backend.clone());
+        assert_eq!(
+            manager.enable(8888).unwrap_err().code,
+            "SYSTEM_PROXY_CONFLICT"
+        );
+        assert_eq!(backend.restore_calls(), 0);
+        assert_eq!(
+            backend.capture().unwrap(),
+            json!({"server": "user-proxy", "port": 9090})
+        );
+        assert!(manager.is_managed().unwrap());
+    }
+
+    #[test]
+    fn manually_restored_state_clears_snapshot_without_writes_and_allows_enable() {
+        let fixture = ProxyFixture::managed();
+        *fixture.backend.state.lock().unwrap() = json!({"server": "original-proxy", "port": 3128});
+        assert!(!fixture.manager.status().unwrap().conflict);
+        fixture.manager.restore().unwrap();
+        assert_eq!(fixture.backend.restore_calls(), 0);
+        assert!(!fixture.manager.is_managed().unwrap());
+        fixture.manager.enable(8889).unwrap();
     }
 
     #[test]

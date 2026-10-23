@@ -82,6 +82,40 @@ pub enum CertificateTrustState {
     Unavailable,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CaPrivateKeyState {
+    Ready,
+    Missing,
+    Mismatch,
+    Unavailable,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertificateTrustDetails {
+    pub public_trust: CertificateTrustState,
+    pub private_key_state: CaPrivateKeyState,
+}
+
+impl CertificateTrustDetails {
+    pub fn summary(&self) -> CertificateTrustState {
+        if matches!(
+            self.public_trust,
+            CertificateTrustState::Unsupported | CertificateTrustState::NotGenerated
+        ) {
+            return self.public_trust;
+        }
+        match self.private_key_state {
+            CaPrivateKeyState::Ready => self.public_trust,
+            CaPrivateKeyState::Missing | CaPrivateKeyState::Mismatch => {
+                CertificateTrustState::Mismatch
+            }
+            CaPrivateKeyState::Unavailable => CertificateTrustState::Unavailable,
+        }
+    }
+}
+
 /// Mutations are always explicit; constructing services or checking status never installs a CA.
 pub trait CertificateTrust: Send + Sync {
     fn status(
@@ -142,7 +176,14 @@ pub trait SystemProxyBackend: Send + Sync {
     fn capture(&self) -> Result<Value, AppError>;
     fn apply(&self, port: u16) -> Result<(), AppError>;
     fn is_managed(&self, port: u16) -> Result<bool, AppError>;
-    /// Backends may recognize persisted partial recovery without accepting user changes.
+    fn is_original(&self, snapshot: &Value) -> Result<bool, AppError> {
+        Ok(self.capture()? == *snapshot)
+    }
+    /// Retry any pending OS notification once the configuration already matches.
+    fn finish_restore(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+    /// Accept per-field original/managed mixtures only during persisted apply/recovery.
     fn can_restore(
         &self,
         _snapshot: &Value,
