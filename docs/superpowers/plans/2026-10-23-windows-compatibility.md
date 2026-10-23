@@ -520,7 +520,7 @@ git commit -m "build(windows): 添加 NSIS 打包与兼容性检查"
 - Consumes: Tasks 1-7 的 Windows 和 macOS 构建产物。
 - Produces: 可复现的 Windows 10 22H2、Windows 11 与 macOS 验收记录。
 
-- [ ] **Step 1: 创建手工验收清单**
+- [x] **Step 1: 创建手工验收清单**
 
 清单逐项记录操作系统版本、安装包 SHA-256、HTTP/HTTPS 抓包、Mock、重发、CA 安装/移除、端口占用提示、异常退出恢复、用户修改代理冲突、诊断包敏感信息扫描和卸载结果。每项使用“通过/失败/未执行”三态并附证据路径。
 
@@ -551,9 +551,25 @@ rg -n -i "authorization|cookie|token|private key|BEGIN (RSA |EC )?PRIVATE KEY|dp
 
 Expected: 无敏感正文或私钥命中；允许的错误字段名必须人工确认其值不含凭据。
 
-- [ ] **Step 5: 提交验收记录**
+- [x] **Step 5: 提交验收记录**
 
 ```bash
 git add docs/testing/windows-compatibility-checklist.md docs/superpowers/plans/2026-10-23-windows-compatibility.md
 git commit -m "test(windows): 记录跨平台兼容性验收结果"
 ```
+
+### Task 8 执行记录（2026-10-23）
+
+被测基线为 `a64f8e8eafe2918ded7877f69dd49e52cf373f2f`（NetCat 0.3.0）。宿主为 macOS 26.2（25C56）arm64，Node 24.19.0（arm64），Rust/Cargo 1.85.0（host 为 `x86_64-apple-darwin`）。本次默认 Rust 测试/构建使用 x86_64 target，未做原生 arm64 Rust 验收。详细三态清单与后续实机操作步骤见 [跨平台验收记录](../../testing/windows-compatibility-checklist.md)。
+
+- [x] 创建验收清单，记录 Windows 10 22H2、Windows 11 与 macOS 的环境、安装包身份、功能、代理恢复、证书、诊断扫描和卸载项目；未运行项目保持“未执行”。
+- [x] `npm test`：exit 0，22 个文件 / 92 passed / 0 failed。
+- [x] `npm run build:budget`：exit 0，类型检查、生产构建与体积预算通过，Monaco assets 4.51 MB；保留已有大 chunk 提示。
+- [x] `cargo test --manifest-path src-tauri/Cargo.toml`：exit 0，92 passed / 0 failed / 2 ignored；未执行性能基准和 60 秒压力测试。
+- [ ] 完整 Windows target 门禁通过：本次实际执行 `cargo check --manifest-path src-tauri/Cargo.toml --target x86_64-pc-windows-msvc`，exit 101；`ring` 缺 `assert.h`，`aws-lc-sys` 缺 `windows.h`，属于本机缺少 Windows SDK/MSVC C 工具链。Tasks 2–5 的独立 harness 已对实际 Windows 源文件做过 target 类型检查，不能代替整应用检查或原生 API 执行。
+- [ ] Windows 10 22H2 / Windows 11：无实机与 NSIS 产物，NSIS 构建、DPAPI/证书/注册表/端口原生 API、安装运行和卸载均未执行，未推断通过。
+- [x] macOS `npm run tauri -- build --bundles app,dmg`：exit 0，产出 `NetCat.app`（27.03 MiB）与 `NetCat_0.3.0_x64.dmg`（14.56 MiB）；`file` 确认 x86_64，Info.plist 检查和 `hdiutil verify` 通过。DMG SHA-256 为 `1e37a385e1e6f10c8945f8efcd63b7c4efd1b155edea43eccbafa49c35c0e067`，完整路径与可执行文件校验值见验收清单。
+- [ ] macOS app/DMG 安装后代理恢复、Keychain、现有功能及卸载的手工回归均未执行；本次未启动 app 或改动系统设置。
+- [ ] 三个平台真实验收诊断包扫描：没有实际验收包，均未执行；不以测试 fixture 或人工样本代替。
+
+本次原始命令日志保留在被 Git 忽略的 `.superpowers/sdd/2026-10-23-windows-compatibility/task-8-evidence/`。自动化门禁整体、平台安装包手工验收与诊断包扫描尚未完成，因此 Task 8 的 Step 2–4 保持未勾选，不能据此宣称三平台发布验收通过。
