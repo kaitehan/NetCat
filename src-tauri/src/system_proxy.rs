@@ -105,7 +105,11 @@ impl SystemProxyManager {
                     "系统代理恢复记录不适用于当前平台",
                 ));
             }
-            if !self.backend.is_managed(snapshot.port)? {
+            if !self.backend.can_restore(
+                &snapshot.payload,
+                snapshot.port,
+                snapshot.restoring.unwrap_or(false),
+            )? {
                 return Err(AppError::new(
                     "SYSTEM_PROXY_CONFLICT",
                     "系统代理已被修改，无法自动恢复",

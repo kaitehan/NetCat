@@ -86,6 +86,15 @@ pub trait SystemProxyBackend: Send + Sync {
     fn capture(&self) -> Result<Value, AppError>;
     fn apply(&self, port: u16) -> Result<(), AppError>;
     fn is_managed(&self, port: u16) -> Result<bool, AppError>;
+    /// Backends may recognize persisted partial recovery without accepting user changes.
+    fn can_restore(
+        &self,
+        _snapshot: &Value,
+        port: u16,
+        _restoring: bool,
+    ) -> Result<bool, AppError> {
+        self.is_managed(port)
+    }
     fn restore(&self, snapshot: &Value) -> Result<(), AppError>;
 }
 
