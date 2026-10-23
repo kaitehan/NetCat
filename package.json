@@ -10,7 +10,8 @@
     "build:budget": "npm run build && node scripts/check-bundle-size.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:build:windows": "tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json"
   },
   "dependencies": {
     "@lucide/vue": "^1.61.0",
