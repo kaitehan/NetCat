@@ -3,7 +3,7 @@ use std::{process::Command, sync::Arc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{SecretStore, SystemProxyBackend};
+use super::{PortProcess, SecretStore, SystemProxyBackend};
 use crate::{
     ca::KEYCHAIN_SERVICE,
     error::AppError,
@@ -15,6 +15,37 @@ use crate::{
 };
 
 const KEYCHAIN_USER: &str = "root-ca-private-key";
+
+pub fn platform_info() -> crate::models::PlatformInfo {
+    let version = Command::new("/usr/bin/sw_vers")
+        .arg("-productVersion")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .unwrap_or_else(|| "unknown".into());
+    crate::models::PlatformInfo {
+        os: "macos".into(),
+        version,
+        arch: std::env::consts::ARCH.into(),
+        certificate_trust_supported: false,
+    }
+}
+
+pub fn port_listener(port: u16) -> Option<PortProcess> {
+    let output = Command::new("/usr/sbin/lsof")
+        .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut columns = text.lines().nth(1)?.split_whitespace();
+    let name = columns.next()?.to_owned();
+    let pid = columns.next()?.parse().ok()?;
+    Some(PortProcess {
+        pid,
+        name: Some(name),
+    })
+}
 
 #[derive(Clone, Default)]
 pub struct KeychainSecretStore;

@@ -3,6 +3,23 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformInfo {
+    pub os: String,
+    pub version: String,
+    pub arch: String,
+    pub certificate_trust_supported: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemProxyStatus {
+    pub managed: bool,
+    pub recovery_pending: bool,
+    pub conflict: bool,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum DiagnosticLevel {

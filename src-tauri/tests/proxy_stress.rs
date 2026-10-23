@@ -53,7 +53,10 @@ async fn sustains_200_qps_for_60_seconds_and_keeps_5000_rows() {
             source_exchange_id: None,
         })
         .unwrap();
-    let service = ProxyService::new(Arc::clone(&store));
+    let service = ProxyService::new(
+        Arc::clone(&store),
+        Arc::new(netcat_lib::platform::NativePortInspector),
+    );
     let status = service
         .start(
             ProxyConfig {

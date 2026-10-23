@@ -1,4 +1,5 @@
 pub mod certificates;
+pub mod diagnostics;
 pub mod secrets;
 pub mod system_proxy;
 

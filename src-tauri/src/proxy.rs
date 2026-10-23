@@ -33,6 +33,7 @@ use crate::{
         DiagnosticLevel, DiagnosticLog, DiagnosticScope, MockRule, ProxyConfig, ProxyState,
         ProxyStatus, ReplayMode, ReplayRequest, ReplayResult, TrafficDraft, TrafficSummary,
     },
+    platform::PortInspector,
     rules::RuntimeMockRules,
     storage::Store,
 };
@@ -61,14 +62,19 @@ pub struct ProxyService {
     shutdown: Mutex<Option<oneshot::Sender<()>>>,
     task: Mutex<Option<JoinHandle<Result<(), hudsucker::Error>>>>,
     event_sink: Arc<dyn ProxyEventSink>,
+    port_inspector: Arc<dyn PortInspector>,
 }
 
 impl ProxyService {
-    pub fn new(store: Arc<Store>) -> Self {
-        Self::with_event_sink(store, Arc::new(NoopEventSink))
+    pub fn new(store: Arc<Store>, port_inspector: Arc<dyn PortInspector>) -> Self {
+        Self::with_event_sink(store, Arc::new(NoopEventSink), port_inspector)
     }
 
-    pub fn with_event_sink(store: Arc<Store>, event_sink: Arc<dyn ProxyEventSink>) -> Self {
+    pub fn with_event_sink(
+        store: Arc<Store>,
+        event_sink: Arc<dyn ProxyEventSink>,
+        port_inspector: Arc<dyn PortInspector>,
+    ) -> Self {
         Self {
             store,
             rules: Arc::new(RwLock::new(RuntimeMockRules::default())),
@@ -77,6 +83,7 @@ impl ProxyService {
             shutdown: Mutex::new(None),
             task: Mutex::new(None),
             event_sink,
+            port_inspector,
         }
     }
 
@@ -413,7 +420,10 @@ impl ProxyService {
         let listener = TcpListener::bind(SocketAddr::from((bind_ip, config.port)))
             .await
             .map_err(|error| {
-                let occupant = port_occupant(config.port);
+                let occupant = self
+                    .port_inspector
+                    .listener(config.port)
+                    .map(|process| process.to_string());
                 self.fail_status(config.port, error.to_string());
                 self.event_sink.diagnostic_log(
                     &DiagnosticLog::new(
@@ -996,22 +1006,6 @@ fn simple_response(status: StatusCode, message: &str) -> Response<Body> {
         .expect("static response is valid")
 }
 
-fn port_occupant(port: u16) -> Option<String> {
-    #[cfg(target_os = "macos")]
-    {
-        let output = std::process::Command::new("/usr/sbin/lsof")
-            .args(["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN"])
-            .output()
-            .ok()?;
-        parse_lsof_listener(&String::from_utf8_lossy(&output.stdout))
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        let _ = port;
-        None
-    }
-}
-
 pub fn parse_lsof_listener(output: &str) -> Option<String> {
     let mut lines = output.lines();
     lines.next()?;
@@ -1029,6 +1023,64 @@ fn headers_to_map(headers: &hudsucker::hyper::HeaderMap) -> BTreeMap<String, Str
                 .map(|value| (name.as_str().to_string(), value.to_string()))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::{PortInspector, PortProcess};
+
+    struct FixturePorts {
+        port: u16,
+        name: Option<String>,
+    }
+    impl PortInspector for FixturePorts {
+        fn listener(&self, port: u16) -> Option<PortProcess> {
+            assert_eq!(port, self.port);
+            Some(PortProcess {
+                pid: 42,
+                name: self.name.clone(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn occupied_port_reports_injected_process_or_pid_when_name_is_unavailable() {
+        for (name, expected) in [
+            (Some("process.exe".to_string()), "process.exe (PID 42)"),
+            (None, "PID 42"),
+        ] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let store = Arc::new(Store::open_in_memory(100, 1024).unwrap());
+            let service = ProxyService::new(store, Arc::new(FixturePorts { port, name }));
+            let key = KeyPair::generate().unwrap();
+            let issuer = hudsucker::rcgen::CertificateParams::default()
+                .self_signed(&key)
+                .unwrap();
+            let issuer = Issuer::from_ca_cert_pem(&issuer.pem(), key).unwrap();
+            let error = service
+                .start(
+                    ProxyConfig {
+                        port,
+                        ..Default::default()
+                    },
+                    issuer,
+                    Vec::new(),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.code, "PORT_UNAVAILABLE");
+            assert!(
+                error.detail.as_deref().unwrap().contains(expected),
+                "{error:?}"
+            );
+            assert!(
+                error.action.as_deref().unwrap().contains(expected),
+                "{error:?}"
+            );
+        }
+    }
 }
 
 fn is_private_client(ip: IpAddr) -> bool {

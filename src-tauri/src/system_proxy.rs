@@ -129,6 +129,44 @@ impl SystemProxyManager {
         Ok(self.store.get_setting(SNAPSHOT_KEY)?.is_some())
     }
 
+    /// Read-only: pending recovery means an original configuration is retained.
+    pub fn status(&self) -> Result<crate::models::SystemProxyStatus, AppError> {
+        let _operation = self.operation.lock().expect("system proxy mutex poisoned");
+        let Some(payload) = self.store.get_setting(SNAPSHOT_KEY)? else {
+            return Ok(crate::models::SystemProxyStatus {
+                managed: false,
+                recovery_pending: false,
+                conflict: false,
+            });
+        };
+        let value: serde_json::Value = serde_json::from_str(&payload)
+            .map_err(|_| AppError::new("SYSTEM_PROXY_RESTORE_ERROR", "系统代理恢复记录损坏"))?;
+        if value.get("version").is_none() && self.backend.platform() == "macos" {
+            return Ok(crate::models::SystemProxyStatus {
+                managed: true,
+                recovery_pending: true,
+                conflict: false,
+            });
+        }
+        let snapshot: ProxySnapshot = serde_json::from_value(value)
+            .map_err(|_| AppError::new("SYSTEM_PROXY_RESTORE_ERROR", "系统代理恢复记录损坏"))?;
+        if snapshot.version != 1 || snapshot.platform != self.backend.platform() {
+            return Err(AppError::new(
+                "SYSTEM_PROXY_RESTORE_ERROR",
+                "系统代理恢复记录不适用于当前平台",
+            ));
+        }
+        Ok(crate::models::SystemProxyStatus {
+            managed: self.backend.is_managed(snapshot.port)?,
+            recovery_pending: true,
+            conflict: !self.backend.can_restore(
+                &snapshot.payload,
+                snapshot.port,
+                snapshot.restoring.unwrap_or(false),
+            )?,
+        })
+    }
+
     fn mark_restoring(&self, snapshot: &mut ProxySnapshot) -> Result<(), AppError> {
         snapshot.restoring = Some(true);
         let payload = serde_json::to_string(snapshot).map_err(|error| {
@@ -360,6 +398,26 @@ mod tests {
         assert_eq!(
             fixture.backend.capture().unwrap(),
             json!({"server": "user-proxy", "port": 9090})
+        );
+    }
+
+    #[test]
+    fn status_reports_live_ownership_pending_recovery_and_conflicts_without_restoring() {
+        let fixture = ProxyFixture::new(false, false, false);
+        let initial = fixture.manager.status().unwrap();
+        assert!(!initial.managed && !initial.recovery_pending && !initial.conflict);
+        fixture.manager.enable(8888).unwrap();
+        let owned = fixture.manager.status().unwrap();
+        assert!(owned.managed && owned.recovery_pending && !owned.conflict);
+        fixture.backend.set_external_change();
+        let changed = fixture.manager.status().unwrap();
+        assert!(!changed.managed && changed.recovery_pending && changed.conflict);
+        assert_eq!(fixture.backend.restore_calls(), 0);
+        assert!(fixture.store.get_setting(SNAPSHOT_KEY).unwrap().is_some());
+        let json = serde_json::to_value(changed).unwrap();
+        assert_eq!(
+            json,
+            json!({"managed": false, "recoveryPending": true, "conflict": true})
         );
     }
 

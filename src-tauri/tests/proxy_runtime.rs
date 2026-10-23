@@ -93,7 +93,11 @@ async fn replay_works_while_proxy_is_stopped_and_preserves_request_body() {
         .insert_exchange(replay_source(format!("http://{address}/replay")))
         .unwrap();
     let events = Arc::new(CollectingEvents::default());
-    let service = ProxyService::with_event_sink(Arc::clone(&store), events.clone());
+    let service = ProxyService::with_event_sink(
+        Arc::clone(&store),
+        events.clone(),
+        Arc::new(netcat_lib::platform::NativePortInspector),
+    );
 
     let result = service
         .replay("source", ReplayMode::Upstream)
@@ -139,7 +143,10 @@ async fn edited_replay_uses_modified_request_and_links_the_source() {
     store
         .insert_exchange(replay_source(format!("http://{address}/original")))
         .unwrap();
-    let service = ProxyService::new(Arc::clone(&store));
+    let service = ProxyService::new(
+        Arc::clone(&store),
+        Arc::new(netcat_lib::platform::NativePortInspector),
+    );
 
     let result = service
         .send_replay(ReplayRequest {
@@ -170,7 +177,11 @@ async fn replay_failure_emits_a_sanitized_diagnostic_event() {
         .insert_exchange(replay_source(format!("http://{address}/replay")))
         .unwrap();
     let events = Arc::new(CollectingEvents::default());
-    let service = ProxyService::with_event_sink(Arc::clone(&store), events.clone());
+    let service = ProxyService::with_event_sink(
+        Arc::clone(&store),
+        events.clone(),
+        Arc::new(netcat_lib::platform::NativePortInspector),
+    );
 
     let error = service
         .replay("source", ReplayMode::Upstream)
@@ -217,7 +228,11 @@ async fn mock_aware_replay_uses_current_rule_without_running_proxy() {
         })
         .unwrap();
     let events = Arc::new(CollectingEvents::default());
-    let service = ProxyService::with_event_sink(Arc::clone(&store), events.clone());
+    let service = ProxyService::with_event_sink(
+        Arc::clone(&store),
+        events.clone(),
+        Arc::new(netcat_lib::platform::NativePortInspector),
+    );
 
     let result = service
         .replay("source", ReplayMode::MockAware)
@@ -276,7 +291,11 @@ async fn proxy_serves_mock_and_persists_exchange() {
         })
         .unwrap();
     let events = Arc::new(CollectingEvents::default());
-    let service = ProxyService::with_event_sink(Arc::clone(&store), events.clone());
+    let service = ProxyService::with_event_sink(
+        Arc::clone(&store),
+        events.clone(),
+        Arc::new(netcat_lib::platform::NativePortInspector),
+    );
 
     let status = service
         .start(
@@ -362,7 +381,10 @@ async fn proxy_forwards_a_real_http_upstream_response() {
     let ca = CaManager::new(directory.path().to_path_buf(), MemorySecrets::default());
     ca.generate().unwrap();
     let store = Arc::new(Store::open_in_memory(5000, 10 * 1024 * 1024).unwrap());
-    let service = ProxyService::new(Arc::clone(&store));
+    let service = ProxyService::new(
+        Arc::clone(&store),
+        Arc::new(netcat_lib::platform::NativePortInspector),
+    );
     let status = service
         .start(
             ProxyConfig {
@@ -422,7 +444,10 @@ async fn https_mock_uses_a_leaf_certificate_trusted_by_the_generated_ca() {
             source_exchange_id: None,
         })
         .unwrap();
-    let service = ProxyService::new(Arc::clone(&store));
+    let service = ProxyService::new(
+        Arc::clone(&store),
+        Arc::new(netcat_lib::platform::NativePortInspector),
+    );
     let status = service
         .start(
             ProxyConfig {

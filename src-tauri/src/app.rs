@@ -14,7 +14,7 @@ use crate::{
         MockRuleTestResult, ProxyConfig, ProxyStatus, ReplayDraft, ReplayMode, ReplayRequest,
         ReplayResult, TrafficCopyKind, TrafficDetail, TrafficFilter, TrafficSummary,
     },
-    platform::PlatformServices,
+    platform::{CertificateTrustState, PlatformServices},
     proxy::{ProxyEventSink, ProxyService},
     rules::RuntimeMockRules,
     storage::Store,
@@ -27,7 +27,70 @@ struct AppState {
     store: Arc<Store>,
     proxy: Arc<ProxyService>,
     ca: CaManager,
-    system_proxy: SystemProxyManager,
+    platform: PlatformServices,
+}
+
+enum TrustOperation {
+    Status,
+    Install,
+    Remove,
+}
+
+impl AppState {
+    fn certificate_trust(
+        &self,
+        operation: TrustOperation,
+    ) -> Result<CertificateTrustState, AppError> {
+        if !self.platform.info.certificate_trust_supported {
+            return Ok(CertificateTrustState::Unsupported);
+        }
+        let status = self.ca.status()?;
+        if !status.generated {
+            return Ok(CertificateTrustState::NotGenerated);
+        }
+        let certificate = std::fs::read(self.ca.certificate_path()).map_err(|error| {
+            AppError::new("FILE_ERROR", "无法读取 CA 证书").with_detail(error.to_string())
+        })?;
+        let fingerprint = status
+            .fingerprint
+            .as_deref()
+            .ok_or_else(|| AppError::new("CA_FINGERPRINT_INVALID", "CA 证书指纹不可用"))?;
+        let trust = &self.platform.certificate_trust;
+        match operation {
+            TrustOperation::Status => trust.status(&certificate, fingerprint),
+            TrustOperation::Install => trust.install(&certificate, fingerprint),
+            TrustOperation::Remove => trust.remove(&certificate, fingerprint),
+        }
+    }
+}
+
+#[tauri::command]
+fn get_platform_info(state: State<'_, AppState>) -> crate::models::PlatformInfo {
+    state.platform.info.clone()
+}
+
+#[tauri::command]
+fn get_system_proxy_status(
+    state: State<'_, AppState>,
+) -> Result<crate::models::SystemProxyStatus, AppError> {
+    state.platform.system_proxy.status()
+}
+
+#[tauri::command]
+fn get_certificate_trust_status(
+    state: State<'_, AppState>,
+) -> Result<CertificateTrustState, AppError> {
+    state.certificate_trust(TrustOperation::Status)
+}
+
+#[tauri::command]
+fn install_ca_trust(state: State<'_, AppState>) -> Result<CertificateTrustState, AppError> {
+    state.certificate_trust(TrustOperation::Install)
+}
+
+#[tauri::command]
+fn remove_ca_trust(state: State<'_, AppState>) -> Result<CertificateTrustState, AppError> {
+    state.certificate_trust(TrustOperation::Remove)
 }
 
 struct TauriEventSink(tauri::AppHandle);
@@ -110,7 +173,7 @@ async fn stop_proxy(
     state: State<'_, AppState>,
 ) -> Result<ProxyStatus, AppError> {
     let status = state.proxy.stop().await?;
-    restore_system_proxy_inner(&app, &state.system_proxy)?;
+    restore_system_proxy_inner(&app, &state.platform.system_proxy)?;
     Ok(status)
 }
 
@@ -147,7 +210,7 @@ fn enable_system_proxy(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
     if status.state != crate::models::ProxyState::Running {
         return Err(AppError::new("PROXY_NOT_RUNNING", "请先启动代理"));
     }
-    match state.system_proxy.enable(status.port) {
+    match state.platform.system_proxy.enable(status.port) {
         Ok(()) => {
             emit_diagnostic(
                 &app,
@@ -179,7 +242,7 @@ fn enable_system_proxy(app: tauri::AppHandle, state: State<'_, AppState>) -> Res
 
 #[tauri::command]
 fn restore_system_proxy(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
-    restore_system_proxy_inner(&app, &state.system_proxy)
+    restore_system_proxy_inner(&app, &state.platform.system_proxy)
 }
 
 fn restore_system_proxy_inner(
@@ -217,7 +280,7 @@ fn restore_system_proxy_inner(
 
 #[tauri::command]
 fn is_system_proxy_enabled(state: State<'_, AppState>) -> Result<bool, AppError> {
-    state.system_proxy.is_managed()
+    state.platform.system_proxy.is_managed()
 }
 
 #[tauri::command]
@@ -253,27 +316,25 @@ fn export_diagnostic_bundle(
     destination: String,
     logs: Vec<DiagnosticLog>,
 ) -> Result<(), AppError> {
-    let macos_version = std::process::Command::new("/usr/bin/sw_vers")
-        .arg("-productVersion")
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    let ca = state.ca.status()?;
-    let metadata = serde_json::json!({
-        "application": { "name": "NetCat", "version": env!("CARGO_PKG_VERSION") },
-        "macOS": macos_version,
-        "proxy": state.proxy.status(),
-        "systemProxyManaged": state.system_proxy.is_managed()?,
-        "ca": { "generated": ca.generated, "fingerprint": ca.fingerprint },
-        "databaseQuickCheck": state.store.quick_check()?,
-        "generatedAt": Utc::now().to_rfc3339(),
-    });
+    let metadata = diagnostic_metadata(&state)?;
     let archive = build_diagnostic_archive(metadata, &logs)?;
     std::fs::write(destination, archive).map_err(|error| {
         AppError::new("DIAGNOSTIC_EXPORT_ERROR", "无法写入诊断包").with_detail(error.to_string())
     })
+}
+
+fn diagnostic_metadata(state: &AppState) -> Result<serde_json::Value, AppError> {
+    let ca = state.ca.status()?;
+    let metadata = serde_json::json!({
+        "application": { "name": "NetCat", "version": env!("CARGO_PKG_VERSION") },
+        "platform": state.platform.info,
+        "proxy": state.proxy.status(),
+        "systemProxy": state.platform.system_proxy.status()?,
+        "ca": { "generated": ca.generated, "fingerprint": ca.fingerprint },
+        "databaseQuickCheck": state.store.quick_check()?,
+        "generatedAt": Utc::now().to_rfc3339(),
+    });
+    Ok(metadata)
 }
 
 #[tauri::command]
@@ -491,22 +552,25 @@ pub fn run() {
             );
             let platform = PlatformServices::current(Arc::clone(&store), &data_directory)
                 .map_err(|error| error.to_string())?;
-            let system_proxy = platform.system_proxy;
-            if let Err(error) = system_proxy.restore() {
+            if let Err(error) = platform.system_proxy.restore() {
                 let _ = app.emit("storage-warning", &error);
             }
             let event_sink = Arc::new(TauriEventSink(app.handle().clone()));
             let proxy = Arc::new(ProxyService::with_event_sink(
                 Arc::clone(&store),
                 event_sink,
+                platform.ports.clone(),
             ));
-            let ca = CaManager::new(data_directory.join("certificates"), platform.secrets);
+            let ca = CaManager::new(
+                data_directory.join("certificates"),
+                platform.secrets.clone(),
+            );
             initialize_migrated_ca(migrated_from_netcapture, &ca);
             app.manage(AppState {
                 store,
                 proxy,
                 ca,
-                system_proxy,
+                platform,
             });
             Ok(())
         })
@@ -517,6 +581,11 @@ pub fn run() {
             set_capture_enabled,
             generate_ca,
             get_ca_status,
+            get_platform_info,
+            get_system_proxy_status,
+            get_certificate_trust_status,
+            install_ca_trust,
+            remove_ca_trust,
             export_ca,
             enable_system_proxy,
             restore_system_proxy,
@@ -551,7 +620,7 @@ pub fn run() {
                 tauri::async_runtime::block_on(async {
                     let _ = state.proxy.stop().await;
                 });
-                let _ = state.system_proxy.restore();
+                let _ = state.platform.system_proxy.restore();
             }
         }
     });
@@ -561,7 +630,7 @@ pub fn run() {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use super::initialize_migrated_ca;
+    use super::*;
     use crate::{
         ca::{CaManager, SecretStore},
         error::AppError,
@@ -583,6 +652,121 @@ mod tests {
 
     #[derive(Clone)]
     struct FailingSecrets;
+
+    struct FixtureBackend;
+
+    impl crate::platform::SystemProxyBackend for FixtureBackend {
+        fn platform(&self) -> &'static str {
+            "windows"
+        }
+        fn capture(&self) -> Result<serde_json::Value, AppError> {
+            Ok(serde_json::json!({}))
+        }
+        fn apply(&self, _: u16) -> Result<(), AppError> {
+            Ok(())
+        }
+        fn is_managed(&self, _: u16) -> Result<bool, AppError> {
+            Ok(true)
+        }
+        fn restore(&self, _: &serde_json::Value) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct FixtureCertificateStore(Mutex<Vec<Vec<u8>>>);
+
+    impl crate::platform::windows::certificates::CertificateStoreApi for FixtureCertificateStore {
+        fn certificates(&self) -> Result<Vec<Vec<u8>>, AppError> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+        fn add(&self, der: &[u8]) -> Result<(), AppError> {
+            self.0.lock().unwrap().push(der.to_vec());
+            Ok(())
+        }
+        fn remove(&self, der: &[u8]) -> Result<(), AppError> {
+            self.0.lock().unwrap().retain(|stored| stored != der);
+            Ok(())
+        }
+    }
+
+    fn fixture_state(directory: &std::path::Path) -> AppState {
+        let store = Arc::new(Store::open_in_memory(100, 1024).unwrap());
+        let platform = PlatformServices {
+            secrets: Arc::new(MemorySecrets::default()),
+            system_proxy: SystemProxyManager::new(store.clone(), Arc::new(FixtureBackend)),
+            info: crate::models::PlatformInfo {
+                os: "windows".into(),
+                version: "10.0.22631".into(),
+                arch: "x86_64".into(),
+                certificate_trust_supported: true,
+            },
+            certificate_trust: Arc::new(
+                crate::platform::windows::certificates::WindowsCertificateTrust::new(
+                    FixtureCertificateStore::default(),
+                ),
+            ),
+            ports: Arc::new(crate::platform::NativePortInspector),
+        };
+        AppState {
+            ca: CaManager::new(directory.to_path_buf(), platform.secrets.clone()),
+            proxy: Arc::new(ProxyService::new(store.clone(), platform.ports.clone())),
+            store,
+            platform,
+        }
+    }
+
+    #[test]
+    fn diagnostic_metadata_uses_platform_info_without_private_certificate_data() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = fixture_state(directory.path());
+        state.ca.generate().unwrap();
+
+        let metadata = diagnostic_metadata(&state).unwrap();
+
+        assert_eq!(metadata["platform"]["os"], "windows");
+        assert_eq!(metadata["platform"]["version"], "10.0.22631");
+        assert!(metadata["ca"]["fingerprint"].is_string());
+        assert!(metadata.get("macOS").is_none());
+        assert_eq!(metadata["ca"].as_object().unwrap().len(), 2);
+        let serialized = metadata.to_string();
+        for secret in ["PRIVATE KEY", "BEGIN CERTIFICATE", "privateKey", "NC-DPAPI"] {
+            assert!(!serialized.contains(secret));
+        }
+    }
+
+    #[test]
+    fn certificate_trust_changes_only_on_explicit_install_or_remove() {
+        use crate::platform::CertificateTrustState::*;
+        let directory = tempfile::tempdir().unwrap();
+        let state = fixture_state(directory.path());
+        assert_eq!(
+            state.certificate_trust(TrustOperation::Status).unwrap(),
+            NotGenerated
+        );
+        assert_eq!(
+            state.certificate_trust(TrustOperation::Install).unwrap(),
+            NotGenerated
+        );
+        state.ca.generate().unwrap();
+        diagnostic_metadata(&state).unwrap();
+        assert_eq!(
+            state.certificate_trust(TrustOperation::Status).unwrap(),
+            NotTrusted
+        );
+        assert_eq!(
+            state.certificate_trust(TrustOperation::Install).unwrap(),
+            Trusted
+        );
+        assert_eq!(
+            state.certificate_trust(TrustOperation::Status).unwrap(),
+            Trusted
+        );
+        assert_eq!(
+            state.certificate_trust(TrustOperation::Remove).unwrap(),
+            NotTrusted
+        );
+    }
 
     impl SecretStore for FailingSecrets {
         fn save_private_key(&self, _value: &str) -> Result<(), AppError> {
