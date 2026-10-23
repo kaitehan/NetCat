@@ -1,16 +1,17 @@
 [package]
-name = "netcapture"
-version = "0.1.0"
+name = "netcat"
+version = "0.2.0"
 description = "Local HTTP/HTTPS capture and mock proxy"
+authors = ["kaite han"]
 edition = "2021"
 rust-version = "1.85"
 
 [lib]
-name = "netcapture_lib"
+name = "netcat_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [[bin]]
-name = "netcapture"
+name = "netcat"
 path = "src/main.rs"
 
 [build-dependencies]
@@ -30,7 +31,7 @@ keyring = { version = "3.6.3", features = ["apple-native"] }
 local-ip-address = "0.6"
 regex = "1.11"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-rusqlite = { version = "0.40.2", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["backup", "bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

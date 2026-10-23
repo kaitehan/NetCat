@@ -1,6 +1,10 @@
-# NetCapture
+# NetCat（奈特猫）
 
-NetCapture 是一款本地离线的 macOS HTTP/HTTPS 抓包与 Mock 工具。界面使用 Vue 3，桌面壳与代理运行时使用 Tauri 2 和 Rust。所有流量、规则和设置只保存在本机。
+> 本地守候每一次请求
+
+NetCat（奈特猫）是一款面向开发者的本地 HTTP/HTTPS 抓包与 Mock 工具，可查看请求与响应、筛选流量、重放请求、构造 Mock，并管理本地 CA 与系统代理。流量、规则与设置默认只保存在本机。
+
+当前版本面向 macOS，界面使用 Vue 3，桌面壳与代理运行时使用 Tauri 2 和 Rust。应用由 kaite han 开发。
 
 > 仅可捕获您拥有或已明确获准测试的设备、应用和网络。不要将本工具用于未授权的流量拦截、凭据收集或隐私数据访问。
 
@@ -15,7 +19,7 @@ NetCapture 是一款本地离线的 macOS HTTP/HTTPS 抓包与 Mock 工具。界
 - HAR 1.2 导出和可执行 cURL 复制
 - 当前 macOS 网络服务的 HTTP/HTTPS 系统代理设置与恢复
 
-首版不解析 HTTP/2、QUIC、WebSocket 帧或非 HTTP TCP，不提供断点改包、请求重放、弱网、脚本和 SSL Pinning 绕过。开启证书固定的应用可能无法被解密。
+首版不解析 HTTP/2、QUIC、WebSocket 帧或非 HTTP TCP，不提供断点改包、弱网、脚本和 SSL Pinning 绕过。开启证书固定的应用可能无法被解密。
 
 ## 开发环境
 
@@ -55,18 +59,26 @@ cargo test --manifest-path src-tauri/Cargo.toml --test proxy_stress sustains_200
 
 1. 阅读并确认授权使用声明。
 2. 打开“证书”，点击“生成证书”。公开证书写入应用数据目录，私钥写入 macOS 钥匙串。
-3. 导出公开 CA，双击加入“钥匙串访问”。在“系统”钥匙串中找到 `NetCapture Local Root CA`，展开“信任”，将“使用此证书时”设为“始终信任”。
+3. 导出公开 CA，双击加入“钥匙串访问”。在“系统”钥匙串中找到 `NetCat Local Root CA`，展开“信任”，将“使用此证书时”设为“始终信任”。
 4. 启动代理。需要让遵循 macOS 系统代理的应用自动接入时，再开启“系统代理”。
 5. 完成测试后停止代理。应用会恢复修改前保存的 HTTP 与 HTTPS 代理配置。
 
 证书只应用于受控开发环境。不要导入生产设备，也不要分发给无关人员。
 
+## 从 NetCapture 升级
+
+- 升级前请停止代理并完全退出旧版 NetCapture，避免两个版本同时修改系统代理。
+- 首次使用 NetCat 启动时，如果新数据库尚不存在，应用会将旧目录 `~/Library/Application Support/com.netcapture.desktop/netcapture.sqlite3` 中的流量、Mock 规则和设置复制到新数据库。
+- 旧目录、旧数据库和旧钥匙串记录不会被删除，便于回滚；已有 NetCat 数据不会被覆盖。
+- 升级后会生成新的 `NetCat Local Root CA`。请重新导入并信任新证书，确认 HTTPS 抓包正常后，可从“钥匙串访问”手动删除旧的 `NetCapture Local Root CA`。
+- 证书下载地址已切换为 `/__netcat/ca.crt`，HAR 扩展字段已切换为 `_netcat_*`，不再兼容旧名称。
+
 ## 手机接入
 
 1. Mac 与手机连接同一可信 Wi-Fi。
-2. 在 NetCapture 中开启“局域网”并启动代理。
+2. 在 NetCat 中开启“局域网”并启动代理。
 3. 将手机 Wi-Fi 的 HTTP 代理设为界面显示的 Mac IP 和端口。
-4. 扫描证书配置中的二维码，或访问 `http://<Mac-IP>:28086/__netcapture/ca.crt`。
+4. 扫描证书配置中的二维码，或访问 `http://<Mac-IP>:28086/__netcat/ca.crt`。
 5. iOS 安装描述文件后，还需进入“设置 > 通用 > 关于本机 > 证书信任设置”开启完全信任。
 6. Android 7+ 应用默认可能不信任用户 CA；被测应用需在 Network Security Config 中明确允许。
 
@@ -100,15 +112,15 @@ networksetup -setsecurewebproxystate "Wi-Fi" off
 ## 卸载与删除 CA
 
 1. 停止代理并关闭系统代理。
-2. 在“钥匙串访问”中搜索并删除 `NetCapture Local Root CA`。
+2. 在“钥匙串访问”中搜索并删除 `NetCat Local Root CA`。
 3. 删除“我的证书”或“证书”列表中同名的残留项。
 4. 如需删除钥匙串中的 CA 私钥记录，可执行：
 
 ```bash
-security delete-generic-password -s com.netcapture.desktop -a root-ca-private-key
+security delete-generic-password -s com.kaitehan.netcat -a root-ca-private-key
 ```
 
-5. 删除应用数据目录 `~/Library/Application Support/com.netcapture.desktop`，再将 `NetCapture.app` 移到废纸篓。
+5. 删除应用数据目录 `~/Library/Application Support/com.kaitehan.netcat`，再将 `NetCat.app` 移到废纸篓。
 
 删除应用数据会永久移除本地流量、Mock 规则和设置。HAR 或 CA 公钥导出文件不在该目录时需单独处理。
 

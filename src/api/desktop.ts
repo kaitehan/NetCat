@@ -157,10 +157,10 @@ const browserApi: DesktopApi = {
   },
   async setCaptureEnabled() {},
   async getCaStatus() {
-    return { generated: true, certificatePath: '/Users/demo/NetCapture/netcapture-ca.crt', fingerprint: '8A:31:4D:CC:12:9B' }
+    return { generated: true, certificatePath: '/Users/demo/NetCat/netcat-ca.crt', fingerprint: '8A:31:4D:CC:12:9B' }
   },
   async generateCa() {
-    return { generated: true, certificatePath: '/Users/demo/NetCapture/netcapture-ca.crt', fingerprint: '8A:31:4D:CC:12:9B' }
+    return { generated: true, certificatePath: '/Users/demo/NetCat/netcat-ca.crt', fingerprint: '8A:31:4D:CC:12:9B' }
   },
   async exportCa() {},
   async enableSystemProxy() {},
@@ -178,7 +178,7 @@ const browserApi: DesktopApi = {
       ...row,
       requestHeaders: {
         accept: 'application/json',
-        'user-agent': 'NetCapture Preview/1.0'
+        'user-agent': 'NetCat Preview/1.0'
       },
       responseHeaders: {
         'content-type': 'application/json',
@@ -255,10 +255,10 @@ const browserApi: DesktopApi = {
     return { exchangeId: exchange.id, mocked: false, exchange }
   },
   async hasAcceptedDisclaimer() {
-    return localStorage.getItem('netcapture-disclaimer') === 'accepted'
+    return localStorage.getItem('netcat-disclaimer') === 'accepted'
   },
   async acceptDisclaimer() {
-    localStorage.setItem('netcapture-disclaimer', 'accepted')
+    localStorage.setItem('netcat-disclaimer', 'accepted')
   },
   async openDevtools() {
     throw {
@@ -280,7 +280,7 @@ const tauriApi: DesktopApi = {
   getCaStatus: () => invoke('get_ca_status'),
   generateCa: () => invoke('generate_ca'),
   async exportCa() {
-    const destination = await save({ defaultPath: 'netcapture-ca.crt', filters: [{ name: 'Certificate', extensions: ['crt'] }] })
+    const destination = await save({ defaultPath: 'netcat-ca.crt', filters: [{ name: 'Certificate', extensions: ['crt'] }] })
     if (destination) {
       await invoke('export_ca', { destination })
     }
@@ -296,7 +296,7 @@ const tauriApi: DesktopApi = {
   deleteMockRule: (id) => invoke('delete_mock_rule', { id }),
   setMockEnabled: (id, enabled) => invoke('set_mock_enabled', { id, enabled }),
   async exportHar() {
-    const destination = await save({ defaultPath: 'netcapture-session.har', filters: [{ name: 'HTTP Archive', extensions: ['har'] }] })
+    const destination = await save({ defaultPath: 'netcat-session.har', filters: [{ name: 'HTTP Archive', extensions: ['har'] }] })
     if (destination) {
       await invoke('export_har', { destination })
     }

@@ -4,23 +4,23 @@ use std::{
 };
 
 use http_body_util::BodyExt;
-use netcapture_lib::{
-    ca::{CaManager, SecretStore},
+use netcat_lib::{
+    ca::{CaManager, SecretStore, CA_COMMON_NAME, CA_ORGANIZATION_NAME, KEYCHAIN_SERVICE},
     export::build_har,
     models::{MatchKind, MockRule, TrafficDetail, TrafficSummary},
-    proxy::build_mock_response,
+    proxy::{build_mock_response, CA_DOWNLOAD_PATH},
 };
 
 #[derive(Clone, Default)]
 struct MemorySecrets(Arc<Mutex<Option<String>>>);
 
 impl SecretStore for MemorySecrets {
-    fn save_private_key(&self, value: &str) -> Result<(), netcapture_lib::error::AppError> {
+    fn save_private_key(&self, value: &str) -> Result<(), netcat_lib::error::AppError> {
         *self.0.lock().unwrap() = Some(value.to_string());
         Ok(())
     }
 
-    fn load_private_key(&self) -> Result<Option<String>, netcapture_lib::error::AppError> {
+    fn load_private_key(&self) -> Result<Option<String>, netcat_lib::error::AppError> {
         Ok(self.0.lock().unwrap().clone())
     }
 }
@@ -69,6 +69,11 @@ fn ca_writes_only_public_certificate_to_disk() {
         .unwrap()
         .contains("PRIVATE KEY"));
     assert!(manager.load_issuer().is_ok());
+    assert!(manager.certificate_path().ends_with("netcat-ca.crt"));
+    assert_eq!(CA_COMMON_NAME, "NetCat Local Root CA");
+    assert_eq!(CA_ORGANIZATION_NAME, "NetCat Local Development");
+    assert_eq!(KEYCHAIN_SERVICE, "com.kaitehan.netcat");
+    assert_eq!(CA_DOWNLOAD_PATH, "/__netcat/ca.crt");
 }
 
 #[test]
@@ -79,7 +84,9 @@ fn har_uses_version_1_2_and_preserves_mock_marker() {
         har["log"]["entries"][0]["request"]["url"],
         "https://example.test/users"
     );
-    assert_eq!(har["log"]["entries"][0]["_netcapture_mocked"], true);
+    assert_eq!(har["log"]["creator"]["name"], "NetCat");
+    assert_eq!(har["log"]["entries"][0]["_netcat_mocked"], true);
+    assert!(har["log"]["entries"][0].get("_netcapture_mocked").is_none());
 }
 
 #[tokio::test]

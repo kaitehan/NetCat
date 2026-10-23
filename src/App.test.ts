@@ -279,7 +279,7 @@ describe('App', () => {
       details: { ruleId: 'rule-1' }
     })
     expect(warn).toHaveBeenCalledWith(
-      '[NetCapture][mock] Mock 响应生成失败',
+      '[NetCat][mock] Mock 响应生成失败',
       {
         timestamp: '2026-10-23T10:00:00Z',
         event: 'mock.failed',

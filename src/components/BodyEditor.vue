@@ -45,7 +45,7 @@ async function mountEditor() {
       return
     }
     monacoApi = monaco
-    monaco.editor.defineTheme('netcapture-light', {
+    monaco.editor.defineTheme('netcat-light', {
       base: 'vs',
       inherit: true,
       rules: [],
@@ -62,7 +62,7 @@ async function mountEditor() {
     model = monaco.editor.createModel(props.modelValue, props.language)
     editor = monaco.editor.create(host.value, {
       model,
-      theme: 'netcapture-light',
+      theme: 'netcat-light',
       readOnly: props.readOnly,
       domReadOnly: props.readOnly,
       ariaLabel: props.ariaLabel,

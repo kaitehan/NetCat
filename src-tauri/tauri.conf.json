@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "NetCapture",
-  "version": "0.1.0",
-  "identifier": "com.netcapture.desktop",
+  "productName": "NetCat",
+  "version": "0.2.0",
+  "identifier": "com.kaitehan.netcat",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "NetCapture",
+        "title": "NetCat",
         "width": 1440,
         "height": 900,
         "minWidth": 1080,
@@ -30,6 +30,11 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
+    "publisher": "kaite han",
+    "copyright": "Copyright © 2026 kaite han",
+    "category": "DeveloperTool",
+    "shortDescription": "本地 HTTP/HTTPS 抓包与 Mock 工具",
+    "longDescription": "NetCat（奈特猫）是一款面向开发者的本地 HTTP/HTTPS 抓包与 Mock 工具，可查看请求与响应、筛选流量、重放请求、构造 Mock，并管理本地 CA 与系统代理。流量、规则与设置默认只保存在本机。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

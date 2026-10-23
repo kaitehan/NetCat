@@ -37,6 +37,8 @@ use crate::{
     storage::Store,
 };
 
+pub const CA_DOWNLOAD_PATH: &str = "/__netcat/ca.crt";
+
 pub trait ProxyEventSink: Send + Sync + 'static {
     fn status_changed(&self, _status: &ProxyStatus) {}
     fn traffic_created(&self, _id: &str) {}
@@ -529,7 +531,7 @@ impl HttpHandler for CaptureHandler {
         if self.allow_lan && !is_private_client(context.client_addr.ip()) {
             return simple_response(StatusCode::FORBIDDEN, "仅允许同一私有网络中的设备连接").into();
         }
-        if request.uri().path() == "/__netcapture/ca.crt" {
+        if request.uri().path() == CA_DOWNLOAD_PATH {
             let mut response = Response::new(Body::from(self.certificate_pem.as_ref().clone()));
             *response.status_mut() = StatusCode::OK;
             response.headers_mut().insert(

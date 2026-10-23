@@ -8,7 +8,9 @@ use sha2::{Digest, Sha256};
 
 use crate::{error::AppError, models::CaStatus};
 
-const KEYCHAIN_SERVICE: &str = "com.netcapture.desktop";
+pub const KEYCHAIN_SERVICE: &str = "com.kaitehan.netcat";
+pub const CA_COMMON_NAME: &str = "NetCat Local Root CA";
+pub const CA_ORGANIZATION_NAME: &str = "NetCat Local Development";
 const KEYCHAIN_USER: &str = "root-ca-private-key";
 
 pub trait SecretStore: Clone + Send + Sync + 'static {
@@ -46,7 +48,7 @@ impl<S: SecretStore> CaManager<S> {
     }
 
     pub fn certificate_path(&self) -> PathBuf {
-        self.directory.join("netcapture-ca.crt")
+        self.directory.join("netcat-ca.crt")
     }
 
     pub fn generate(&self) -> Result<CaStatus, AppError> {
@@ -54,8 +56,8 @@ impl<S: SecretStore> CaManager<S> {
         let key_pair = KeyPair::generate().map_err(certificate_error)?;
         let mut params = CertificateParams::default();
         let mut distinguished_name = DistinguishedName::new();
-        distinguished_name.push(DnType::CommonName, "NetCapture Local Root CA");
-        distinguished_name.push(DnType::OrganizationName, "NetCapture Local Development");
+        distinguished_name.push(DnType::CommonName, CA_COMMON_NAME);
+        distinguished_name.push(DnType::OrganizationName, CA_ORGANIZATION_NAME);
         params.distinguished_name = distinguished_name;
         params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
         params.key_usages = vec![
@@ -118,7 +120,7 @@ fn fingerprint(certificate_pem: &str) -> String {
 fn keychain_error(error: keyring::Error) -> AppError {
     AppError::new("KEYCHAIN_ERROR", "无法访问 macOS 钥匙串")
         .with_detail(error.to_string())
-        .with_action("请允许 NetCapture 访问钥匙串后重试")
+        .with_action("请允许 NetCat 访问钥匙串后重试")
 }
 
 fn certificate_error(error: impl std::fmt::Display) -> AppError {

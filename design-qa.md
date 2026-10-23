@@ -1,4 +1,4 @@
-# NetCapture Light Blue Theme Design QA
+# NetCat Light Blue Theme Design QA
 
 ## Comparison Target
 
@@ -12,15 +12,15 @@
 - Normalization: the 2880 x 1600 source was proportionally downsampled to 1620 x 900 and placed beside the 1440 x 900 implementation without stretching.
 - State: light theme, browser demo data loaded, proxy stopped, traffic groups collapsed for the primary comparison.
 
-The reference is a style-direction source for a different product, not a pixel-identical NetCapture layout. Comparison therefore evaluates palette, surface hierarchy, spacing rhythm, controls, borders, radii, and visual density while preserving NetCapture's existing information architecture.
+The reference is a style-direction source for a different product, not a pixel-identical NetCat layout. Comparison therefore evaluates palette, surface hierarchy, spacing rhythm, controls, borders, radii, and visual density while preserving NetCat's existing information architecture.
 
 ## Full-View Comparison
 
 - Fonts and typography: both use a neutral system sans-serif treatment with compact desktop-app sizing, clear hierarchy, zero custom letter spacing, and monospace only for technical content. Long host and URL content truncates without overlapping controls.
-- Spacing and layout: the implementation matches the reference's pale blue application shell, separated white work surfaces, restrained 6-8 px radii, and narrow borders. NetCapture intentionally remains denser because it is an operational traffic inspector.
+- Spacing and layout: the implementation matches the reference's pale blue application shell, separated white work surfaces, restrained 6-8 px radii, and narrow borders. NetCat intentionally remains denser because it is an operational traffic inspector.
 - Colors and tokens: the previous dark green shell and mint actions were replaced by the approved `#e7efff` background, white surfaces, `#2f6fff` primary action color, `#145ce6` strong accent, and semantic cyan/red/amber states.
-- Image quality and assets: the supplied NetCapture application icon and Lucide icon set remain sharp and unchanged. The reference's product-specific illustrations are out of scope and were not recreated as decorative placeholders.
-- Copy and content: all existing NetCapture labels, safety language, demo traffic, and technical content remain unchanged and readable.
+- Image quality and assets: the supplied NetCat application icon and Lucide icon set remain sharp and unchanged. The reference's product-specific illustrations are out of scope and were not recreated as decorative placeholders.
+- Copy and content: all existing NetCat labels, safety language, demo traffic, and technical content remain unchanged and readable.
 
 ## Focused Region Evidence
 
@@ -77,7 +77,7 @@ The reference is a style-direction source for a different product, not a pixel-i
 - Fonts and typography: the same compact hierarchy, weights, and truncation behavior are preserved; no labels overlap or clip at either target viewport.
 - Colors and tokens: the change reuses the existing sidebar, surface, shadow, radius, and text tokens without adding component-local business colors.
 - Image quality and assets: the existing PNG application icon and Lucide navigation icons remain sharp; no assets were synthesized or replaced.
-- Copy and content: the sidebar contains only NetCapture branding, Traffic, Mock Rules, the local-storage statement, and disabled Settings exactly as shown in the corrected source.
+- Copy and content: the sidebar contains only NetCat branding, Traffic, Mock Rules, the local-storage statement, and disabled Settings exactly as shown in the corrected source.
 - Primary interaction checked: switched from Traffic to Mock Rules and back to Traffic at 1080 x 700; the full-height sidebar and right-column alignment remained stable in both states.
 - Browser console check: 0 errors and 0 warnings.
 - No actionable P0, P1, or P2 issues remain in this pass.

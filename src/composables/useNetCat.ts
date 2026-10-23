@@ -20,7 +20,7 @@ import {
   writeDiagnosticLog
 } from '../features/diagnostics/debug-bridge'
 
-export function useNetCapture() {
+export function useNetCat() {
   const api = inject(desktopApiKey, desktopApi)
   const proxyStatus = shallowRef<ProxyStatus>({
     state: 'stopped',
@@ -220,12 +220,12 @@ export function useNetCapture() {
   async function openDevtools() {
     await runAction(async () => {
       await api.openDevtools()
-      console.info('[NetCapture][system] 调试面板已打开', {
+      console.info('[NetCat][system] 调试面板已打开', {
         proxyStatus: proxyStatus.value,
         trafficQueries: [
-          '__NETCAPTURE_DEBUG__.status()',
-          '__NETCAPTURE_DEBUG__.recent()',
-          '__NETCAPTURE_DEBUG__.get(exchangeId)'
+          '__NETCAT_DEBUG__.status()',
+          '__NETCAT_DEBUG__.recent()',
+          '__NETCAT_DEBUG__.get(exchangeId)'
         ]
       })
     })

@@ -4,9 +4,10 @@ use chrono::Utc;
 use tauri::{Emitter, Manager, State};
 
 use crate::{
-    ca::{CaManager, KeychainSecretStore},
+    ca::{CaManager, KeychainSecretStore, SecretStore},
     error::AppError,
     export::{build_exchange_copy as create_exchange_copy, build_har},
+    migration::migrate_legacy_macos_database,
     models::{
         CaStatus, DiagnosticLevel, DiagnosticLog, DiagnosticScope, MockRule, ProxyConfig,
         ProxyStatus, ReplayMode, ReplayResult, TrafficCopyKind, TrafficDetail, TrafficFilter,
@@ -62,6 +63,26 @@ impl ProxyEventSink for TauriEventSink {
 
 fn emit_diagnostic(app: &tauri::AppHandle, log: DiagnosticLog) {
     let _ = app.emit("diagnostic-log", log);
+}
+
+fn initialize_migrated_ca<S: SecretStore>(migrated: bool, ca: &CaManager<S>) -> bool {
+    if !migrated {
+        return false;
+    }
+    match ca.status() {
+        Ok(status) if status.generated => false,
+        Ok(_) => match ca.generate() {
+            Ok(_) => true,
+            Err(error) => {
+                eprintln!("NetCat CA generation after migration failed: {error}");
+                false
+            }
+        },
+        Err(error) => {
+            eprintln!("NetCat CA status after migration failed: {error}");
+            false
+        }
+    }
 }
 
 #[tauri::command]
@@ -309,9 +330,11 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .map_err(|error| format!("无法读取应用数据目录: {error}"))?;
+            let migrated_from_netcapture = migrate_legacy_macos_database(&data_directory)
+                .map_err(|error| error.to_string())?;
             let store = Arc::new(
                 Store::open(
-                    &data_directory.join("netcapture.sqlite3"),
+                    &data_directory.join("netcat.sqlite3"),
                     5_000,
                     10 * 1024 * 1024,
                 )
@@ -327,6 +350,7 @@ pub fn run() {
                 event_sink,
             ));
             let ca = CaManager::new(data_directory.join("certificates"), KeychainSecretStore);
+            initialize_migrated_ca(migrated_from_netcapture, &ca);
             app.manage(AppState {
                 store,
                 proxy,
@@ -361,7 +385,7 @@ pub fn run() {
             open_devtools,
         ])
         .build(tauri::generate_context!())
-        .expect("failed to build NetCapture");
+        .expect("failed to build NetCat");
 
     application.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::Exit) {
@@ -373,4 +397,60 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::initialize_migrated_ca;
+    use crate::{
+        ca::{CaManager, SecretStore},
+        error::AppError,
+    };
+
+    #[derive(Clone, Default)]
+    struct MemorySecrets(Arc<Mutex<Option<String>>>);
+
+    impl SecretStore for MemorySecrets {
+        fn save_private_key(&self, value: &str) -> Result<(), AppError> {
+            *self.0.lock().unwrap() = Some(value.to_string());
+            Ok(())
+        }
+
+        fn load_private_key(&self) -> Result<Option<String>, AppError> {
+            Ok(self.0.lock().unwrap().clone())
+        }
+    }
+
+    #[derive(Clone)]
+    struct FailingSecrets;
+
+    impl SecretStore for FailingSecrets {
+        fn save_private_key(&self, _value: &str) -> Result<(), AppError> {
+            Err(AppError::new("KEYCHAIN_ERROR", "钥匙串不可用"))
+        }
+
+        fn load_private_key(&self) -> Result<Option<String>, AppError> {
+            Err(AppError::new("KEYCHAIN_ERROR", "钥匙串不可用"))
+        }
+    }
+
+    #[test]
+    fn migrated_ca_is_generated_when_missing() {
+        let directory = tempfile::tempdir().unwrap();
+        let manager = CaManager::new(directory.path().to_path_buf(), MemorySecrets::default());
+
+        assert!(initialize_migrated_ca(true, &manager));
+        assert!(manager.status().unwrap().generated);
+    }
+
+    #[test]
+    fn migrated_ca_failure_does_not_abort_startup() {
+        let directory = tempfile::tempdir().unwrap();
+        let manager = CaManager::new(directory.path().to_path_buf(), FailingSecrets);
+
+        assert!(!initialize_migrated_ca(true, &manager));
+        assert!(!manager.certificate_path().exists());
+    }
 }

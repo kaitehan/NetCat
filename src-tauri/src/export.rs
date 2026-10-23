@@ -198,7 +198,7 @@ pub fn build_har(entries: &[TrafficDetail]) -> Result<Value, AppError> {
         "log": {
             "version": "1.2",
             "creator": {
-                "name": "NetCapture",
+                "name": "NetCat",
                 "version": env!("CARGO_PKG_VERSION")
             },
             "entries": entries
@@ -252,9 +252,9 @@ fn har_entry(detail: &TrafficDetail) -> Value {
             "wait": detail.summary.duration_ms.unwrap_or_default(),
             "receive": 0
         },
-        "_netcapture_mocked": detail.summary.mocked,
-        "_netcapture_truncated": detail.summary.truncated,
-        "_netcapture_error": detail.summary.error
+        "_netcat_mocked": detail.summary.mocked,
+        "_netcat_truncated": detail.summary.truncated,
+        "_netcat_error": detail.summary.error
     })
 }
 

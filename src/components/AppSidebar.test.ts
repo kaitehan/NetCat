@@ -21,8 +21,10 @@ describe('AppSidebar', () => {
       }
     })
 
-    const icon = screen.getByRole('img', { name: 'NetCapture 应用图标' })
+    const icon = screen.getByRole('img', { name: 'NetCat 应用图标' })
     expect(icon.getAttribute('src')).toMatch(/icon\.png$/)
+    expect(screen.getByText('NetCat')).toBeVisible()
+    expect(screen.getByText('奈特猫 · LOCAL PROXY')).toBeVisible()
     expect(screen.getByRole('button', { name: '网络请求' })).toBeVisible()
     expect(screen.queryByRole('button', { name: '流量' })).not.toBeInTheDocument()
   })

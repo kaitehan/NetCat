@@ -63,7 +63,7 @@ export interface DiagnosticTrafficDetail extends TrafficSummary {
   responseOriginalBytes: number
 }
 
-export interface NetCaptureDebug {
+export interface NetCatDebug {
   status(): Promise<ProxyStatus>
   recent(limit?: number): Promise<DiagnosticTrafficSummary[]>
   get(exchangeId: string): Promise<DiagnosticTrafficDetail>

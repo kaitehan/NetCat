@@ -3,7 +3,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use netcapture_lib::{
+use netcat_lib::{
     ca::{CaManager, SecretStore},
     models::{
         DiagnosticLog, MatchKind, MockRule, ProxyConfig, ProxyState, ReplayMode, TrafficDraft,
@@ -130,7 +130,7 @@ async fn replay_failure_emits_a_sanitized_diagnostic_event() {
         .iter()
         .find(|log| log.event == "replay.failed")
         .unwrap();
-    assert_eq!(failed.level, netcapture_lib::models::DiagnosticLevel::Error);
+    assert_eq!(failed.level, netcat_lib::models::DiagnosticLevel::Error);
     assert_eq!(failed.details["errorCode"], "REPLAY_UPSTREAM_ERROR");
     assert!(!failed.details.contains_key("url"));
     assert!(!failed.details.contains_key("headers"));
@@ -182,12 +182,12 @@ async fn mock_aware_replay_uses_current_rule_without_running_proxy() {
 }
 
 impl SecretStore for MemorySecrets {
-    fn save_private_key(&self, value: &str) -> Result<(), netcapture_lib::error::AppError> {
+    fn save_private_key(&self, value: &str) -> Result<(), netcat_lib::error::AppError> {
         *self.0.lock().unwrap() = Some(value.to_string());
         Ok(())
     }
 
-    fn load_private_key(&self) -> Result<Option<String>, netcapture_lib::error::AppError> {
+    fn load_private_key(&self) -> Result<Option<String>, netcat_lib::error::AppError> {
         Ok(self.0.lock().unwrap().clone())
     }
 }

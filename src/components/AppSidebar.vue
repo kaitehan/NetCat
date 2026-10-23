@@ -2,6 +2,7 @@
 import { Braces, FlaskConical, Network, Settings } from '@lucide/vue'
 import { computed } from 'vue'
 import appIcon from '../../src-tauri/icons/icon.png'
+import { APP_BRAND } from '../shared/brand'
 import type { ProxyStatus } from '../shared/types'
 
 const { activeView, trafficCount, mockCount, proxyStatus } = defineProps<{
@@ -34,10 +35,10 @@ const statusLabel = computed(() => {
 <template>
   <aside class="sidebar">
     <div class="brand">
-      <img :src="appIcon" alt="NetCapture 应用图标" />
+      <img :src="appIcon" :alt="`${APP_BRAND.name} 应用图标`" />
       <div>
-        <strong>NetCapture</strong>
-        <span>LOCAL PROXY</span>
+        <strong>{{ APP_BRAND.name }}</strong>
+        <span>{{ APP_BRAND.chineseName }} · LOCAL PROXY</span>
       </div>
     </div>
 

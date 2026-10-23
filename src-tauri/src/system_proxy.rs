@@ -35,7 +35,7 @@ impl SystemProxyManager {
         if self.store.get_setting(SNAPSHOT_KEY)?.is_some() {
             return Err(AppError::new(
                 "SYSTEM_PROXY_MANAGED",
-                "NetCapture 已接管系统代理",
+                "NetCat 已接管系统代理",
             ));
         }
         let service = detect_active_service()?;

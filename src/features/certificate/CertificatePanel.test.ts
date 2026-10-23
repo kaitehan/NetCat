@@ -9,7 +9,7 @@ describe('CertificatePanel', () => {
         open: true,
         caStatus: {
           generated: true,
-          certificatePath: '/tmp/netcapture-ca.crt',
+          certificatePath: '/tmp/netcat-ca.crt',
           fingerprint: 'AA:BB'
         },
         proxyStatus: {
@@ -25,6 +25,7 @@ describe('CertificatePanel', () => {
     })
 
     expect(screen.getByLabelText('CA 证书下载二维码')).toBeVisible()
-    expect(screen.getByText('http://192.168.1.24:8888/__netcapture/ca.crt')).toBeVisible()
+    expect(screen.getByText('http://192.168.1.24:8888/__netcat/ca.crt')).toBeVisible()
+    expect(screen.getByText(/NetCat Local Root CA/)).toBeVisible()
   })
 })

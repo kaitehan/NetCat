@@ -23,7 +23,7 @@ const certificateUrl = computed(() => {
   if (!allowLan || proxyStatus.state !== 'running' || !proxyStatus.lanIp) {
     return null
   }
-  return `http://${proxyStatus.lanIp}:${proxyStatus.port}/__netcapture/ca.crt`
+  return `http://${proxyStatus.lanIp}:${proxyStatus.port}/__netcat/ca.crt`
 })
 </script>
 
@@ -70,8 +70,9 @@ const certificateUrl = computed(() => {
           <h3>本机 macOS</h3>
           <ol>
             <li>导出证书并双击加入“钥匙串访问”。</li>
-            <li>在“系统”钥匙串中找到 NetCapture Local Root CA。</li>
+            <li>在“系统”钥匙串中找到 NetCat Local Root CA。</li>
             <li>展开“信任”，将“使用此证书时”设为“始终信任”。</li>
+            <li>从 NetCat 升级时，请重新信任此证书，并可手动删除旧根证书。</li>
           </ol>
         </section>
 

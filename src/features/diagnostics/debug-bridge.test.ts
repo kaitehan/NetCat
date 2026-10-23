@@ -95,15 +95,15 @@ describe('createDebugBridge', () => {
     const target = {} as Window
     const remove = installDebugBridge(apiWithRows([row]), target)
 
-    expect(Object.getOwnPropertyDescriptor(target, '__NETCAPTURE_DEBUG__')).toMatchObject({
+    expect(Object.getOwnPropertyDescriptor(target, '__NETCAT_DEBUG__')).toMatchObject({
       configurable: true,
       enumerable: false,
       writable: false
     })
-    expect(Object.isFrozen(target.__NETCAPTURE_DEBUG__)).toBe(true)
+    expect(Object.isFrozen(target.__NETCAT_DEBUG__)).toBe(true)
 
     remove()
-    expect(target.__NETCAPTURE_DEBUG__).toBeUndefined()
+    expect(target.__NETCAT_DEBUG__).toBeUndefined()
   })
 })
 
@@ -131,7 +131,7 @@ describe('writeDiagnosticLog', () => {
     writeDiagnosticLog(log, consoleTarget)
 
     expect(consoleTarget[method]).toHaveBeenCalledWith(
-      '[NetCapture][proxy] 代理已启动',
+      '[NetCat][proxy] 代理已启动',
       {
         timestamp: '2026-10-23T10:00:00Z',
         event: 'proxy.started',

@@ -2540,8 +2540,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "netcapture"
-version = "0.1.0"
+name = "netcat"
+version = "0.2.0"
 dependencies = [
  "base64 0.22.1",
  "brotli 9.0.0",

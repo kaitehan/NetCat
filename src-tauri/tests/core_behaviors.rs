@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use netcapture_lib::{
+use netcat_lib::{
     export::{build_curl, build_exchange_copy, build_har},
     models::{
         DiagnosticLevel, DiagnosticLog, DiagnosticScope, MatchKind, MockRule, ProxyConfig,

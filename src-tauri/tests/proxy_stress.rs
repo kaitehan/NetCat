@@ -5,7 +5,7 @@ use std::{
 };
 
 use futures_util::future::join_all;
-use netcapture_lib::{
+use netcat_lib::{
     ca::{CaManager, SecretStore},
     models::{MatchKind, MockRule, ProxyConfig},
     proxy::ProxyService,
@@ -16,12 +16,12 @@ use netcapture_lib::{
 struct MemorySecrets(Arc<std::sync::Mutex<Option<String>>>);
 
 impl SecretStore for MemorySecrets {
-    fn save_private_key(&self, value: &str) -> Result<(), netcapture_lib::error::AppError> {
+    fn save_private_key(&self, value: &str) -> Result<(), netcat_lib::error::AppError> {
         *self.0.lock().unwrap() = Some(value.to_string());
         Ok(())
     }
 
-    fn load_private_key(&self) -> Result<Option<String>, netcapture_lib::error::AppError> {
+    fn load_private_key(&self) -> Result<Option<String>, netcat_lib::error::AppError> {
         Ok(self.0.lock().unwrap().clone())
     }
 }

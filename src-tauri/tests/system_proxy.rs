@@ -1,4 +1,4 @@
-use netcapture_lib::system_proxy::{
+use netcat_lib::system_proxy::{
     parse_default_interface, parse_hardware_service, parse_proxy_state,
 };
 

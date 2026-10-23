@@ -14,7 +14,7 @@ import TrafficInspector from './features/traffic/TrafficInspector.vue'
 import TrafficContextMenu, { type TrafficMenuAction } from './features/traffic/TrafficContextMenu.vue'
 import TrafficTable from './features/traffic/TrafficTable.vue'
 import { filterTraffic } from './features/traffic/traffic-filter'
-import { useNetCapture } from './composables/useNetCapture'
+import { useNetCat } from './composables/useNetCat'
 import type {
   DiagnosticTrafficDetail,
   MockRule,
@@ -25,7 +25,7 @@ import type {
   TrafficSummary
 } from './shared/types'
 
-const capture = useNetCapture()
+const capture = useNetCat()
 const activeView = shallowRef<'traffic' | 'mocks' | 'settings'>('traffic')
 const mockEditorOpen = shallowRef(false)
 const editingRule = shallowRef<MockRule | null>(null)

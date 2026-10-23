@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { shallowRef, watch } from 'vue'
 import { ShieldCheck } from '@lucide/vue'
+import { APP_BRAND } from '../../shared/brand'
 
 const { open } = defineProps<{
   open: boolean
@@ -26,7 +27,7 @@ watch(() => open, (value) => {
         <ShieldCheck :size="30" :stroke-width="1.7" />
       </div>
       <h1 id="disclaimer-title">授权使用声明</h1>
-      <p class="lead">NetCapture 仅用于您拥有或已获得明确授权的应用、服务和接口调试。</p>
+      <p class="lead">{{ APP_BRAND.name }} 仅用于您拥有或已获得明确授权的应用、服务和接口调试。</p>
       <div class="statement">
         <p>未经授权抓取、拦截或篡改第三方网络流量，可能违反网络安全和个人信息保护相关法律法规。</p>
         <p>本工具不提供 SSL Pinning 绕过、注入、脱壳或其他规避安全校验的能力。</p>
@@ -41,7 +42,7 @@ watch(() => open, (value) => {
         :disabled="!acknowledged"
         @click="emit('accept')"
       >
-        进入 NetCapture
+        进入 {{ APP_BRAND.name }}
       </button>
     </section>
   </div>

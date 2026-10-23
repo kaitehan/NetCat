@@ -2,7 +2,7 @@ import type { DesktopApi } from '../../api/desktop'
 import type {
   DiagnosticLog,
   DiagnosticTrafficDetail,
-  NetCaptureDebug,
+  NetCatDebug,
   TrafficDetail
 } from '../../shared/types'
 
@@ -51,8 +51,8 @@ function normalizeLimit(limit: number | undefined): number {
   return Math.min(100, Math.max(1, Math.trunc(limit)))
 }
 
-export function createDebugBridge(api: DebugApi): NetCaptureDebug {
-  const bridge: NetCaptureDebug = {
+export function createDebugBridge(api: DebugApi): NetCatDebug {
+  const bridge: NetCatDebug = {
     status: () => api.getProxyStatus(),
     async recent(limit?: number) {
       const rows = await api.listTraffic()
@@ -72,26 +72,26 @@ export function writeDiagnosticLog(log: DiagnosticLog, target: ConsoleTarget = c
     ...(log.exchangeId ? { exchangeId: log.exchangeId } : {}),
     ...log.details
   }
-  target[log.level](`[NetCapture][${log.scope}] ${log.message}`, payload)
+  target[log.level](`[NetCat][${log.scope}] ${log.message}`, payload)
 }
 
 export function installDebugBridge(api: DebugApi, target: Window = window): () => void {
   const bridge = createDebugBridge(api)
-  Object.defineProperty(target, '__NETCAPTURE_DEBUG__', {
+  Object.defineProperty(target, '__NETCAT_DEBUG__', {
     value: bridge,
     configurable: true,
     enumerable: false,
     writable: false
   })
   return () => {
-    if (target.__NETCAPTURE_DEBUG__ === bridge) {
-      delete target.__NETCAPTURE_DEBUG__
+    if (target.__NETCAT_DEBUG__ === bridge) {
+      delete target.__NETCAT_DEBUG__
     }
   }
 }
 
 declare global {
   interface Window {
-    __NETCAPTURE_DEBUG__?: NetCaptureDebug
+    __NETCAT_DEBUG__?: NetCatDebug
   }
 }

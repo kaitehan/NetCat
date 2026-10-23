@@ -17,7 +17,7 @@ const props = {
   systemProxyEnabled: false,
   caStatus: {
     generated: true,
-    certificatePath: '/tmp/netcapture-ca.crt',
+    certificatePath: '/tmp/netcat-ca.crt',
     fingerprint: 'AA:BB'
   },
   busy: false
@@ -33,6 +33,17 @@ describe('SettingsPage', () => {
     const button = screen.getByRole('button', { name: '打开调试面板' })
     await fireEvent.click(button)
     expect(emitted().openDiagnostics).toHaveLength(1)
+  })
+
+  it('shows the NetCat brand, version and author in system settings', async () => {
+    render(SettingsPage, { props })
+
+    await fireEvent.click(screen.getByRole('tab', { name: '系统配置' }))
+
+    expect(screen.getByRole('heading', { name: '关于 NetCat' })).toBeVisible()
+    expect(screen.getByText('奈特猫 · 本地守候每一次请求')).toBeVisible()
+    expect(screen.getByText('0.2.0')).toBeVisible()
+    expect(screen.getByText('kaite han')).toBeVisible()
   })
 
   it('disables the debug panel action while another settings action is busy', async () => {
