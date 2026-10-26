@@ -207,4 +207,4 @@ security delete-generic-password -s com.kaitehan.netcat -a root-ca-private-key
 
 ## 许可证
 
-项目许可证尚待维护者确认。在许可证文件加入仓库之前，源代码默认仍受著作权保护，不代表已授权复制、修改或分发。
+NetCat 使用 [Apache License 2.0](LICENSE) 开源。使用、修改和分发本项目时请遵守许可证条款。

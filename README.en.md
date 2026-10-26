@@ -207,4 +207,4 @@ Suggested GitHub Topics: `http-proxy`, `https-proxy`, `network-debugging`, `api-
 
 ## License
 
-The project license has not yet been selected by the maintainer. Until a license file is added to the repository, the source code remains protected by copyright and is not licensed for copying, modification, or distribution.
+NetCat is open source under the [Apache License 2.0](LICENSE). Use, modification, and distribution of this project must comply with the license terms.
