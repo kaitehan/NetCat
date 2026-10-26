@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Bug, Download, Laptop, Pause, Router, Settings2, ShieldCheck } from '@lucide/vue'
 import { computed, shallowRef } from 'vue'
-import type { CaStatus, CaPrivateKeyState, CertificateTrustState, PlatformInfo, ProxyStatus, SystemProxyStatus } from '../../shared/types'
+import type { CaStatus, CaPrivateKeyState, CertificateTrustState, HistoricalDevice, PairedDevice, PairingChallenge, PlatformInfo, ProxyMode, ProxyStatus, SystemProxyStatus } from '../../shared/types'
 import CertificatePanel from '../certificate/CertificatePanel.vue'
 import MobileConnectionPanel from './MobileConnectionPanel.vue'
 
@@ -12,7 +12,11 @@ const {
   systemProxyStatus,
   proxyStatus,
   port,
-  allowLan,
+  proxyMode,
+  pairedDevices,
+  historicalDevices,
+  pairingIdleTimeout,
+  pairingChallenge,
   lanIp = null,
   captureEnabled,
   systemProxyPreferred,
@@ -26,7 +30,11 @@ const {
   systemProxyStatus: SystemProxyStatus
   proxyStatus: ProxyStatus
   port: number
-  allowLan: boolean
+  proxyMode: ProxyMode
+  pairedDevices: readonly PairedDevice[]
+  historicalDevices: readonly HistoricalDevice[]
+  pairingIdleTimeout: number
+  pairingChallenge: PairingChallenge | null
   lanIp?: string | null
   captureEnabled: boolean
   systemProxyPreferred: boolean
@@ -37,12 +45,18 @@ const {
 
 const emit = defineEmits<{
   updatePort: [value: number]
-  updateAllowLan: [value: boolean]
+  updateProxyMode: [value: ProxyMode]
+  updatePairingIdleTimeout: [value: number]
   updateCapture: [value: boolean]
   updateSystemProxy: [value: boolean]
   toggleProxy: []
   restoreSystemProxy: []
   generateCa: []
+  createPairingChallenge: []
+  renameDevice: [deviceToken: string, name: string]
+  rePairDevice: [deviceToken: string]
+  disconnectDevice: [deviceToken: string]
+  deleteDevice: [deviceToken: string]
   exportCa: []
   trustCa: []
   removeCaTrust: []
@@ -54,6 +68,9 @@ const activeTab = shallowRef<'proxy' | 'certificate' | 'system'>('proxy')
 const proxyRecoveryNeeded = computed(() => systemProxyStatus.conflict ||
   (systemProxyStatus.recoveryPending && (!systemProxyStatus.managed || proxyStatus.state !== 'running')))
 const systemProxyChecked = computed(() => {
+  if (proxyMode === 'mobile') {
+    return false
+  }
   if (proxyRecoveryNeeded.value) {
     return false
   }
@@ -66,6 +83,10 @@ function updateSystemProxy(event: Event) {
   // Native clicks change the DOM before the parent confirms the OS operation.
   input.checked = systemProxyChecked.value
   emit('updateSystemProxy', requested)
+}
+
+function renameDevice(deviceToken: string, name: string) {
+  emit('renameDevice', deviceToken, name)
 }
 </script>
 
@@ -113,15 +134,25 @@ function updateSystemProxy(event: Event) {
     <div v-if="activeTab === 'proxy'" class="settings-content" role="tabpanel">
       <MobileConnectionPanel
         :proxy-status="proxyStatus"
+        :proxy-mode="proxyMode"
         :port="port"
-        :allow-lan="allowLan"
         :lan-ip="lanIp"
         :ca-status="caStatus"
+        :paired-devices="pairedDevices"
+        :historical-devices="historicalDevices"
+        :pairing-idle-timeout="pairingIdleTimeout"
+        :pairing-challenge="pairingChallenge"
         :busy="busy"
         @update-port="emit('updatePort', $event)"
-        @update-allow-lan="emit('updateAllowLan', $event)"
+        @update-proxy-mode="emit('updateProxyMode', $event)"
+        @update-pairing-idle-timeout="emit('updatePairingIdleTimeout', $event)"
         @toggle-proxy="emit('toggleProxy')"
         @generate-ca="emit('generateCa')"
+        @create-pairing-challenge="emit('createPairingChallenge')"
+        @rename-device="renameDevice"
+        @re-pair-device="emit('rePairDevice', $event)"
+        @disconnect-device="emit('disconnectDevice', $event)"
+        @delete-device="emit('deleteDevice', $event)"
       />
 
       <section class="settings-section">
@@ -136,7 +167,8 @@ function updateSystemProxy(event: Event) {
         <div class="setting-row">
           <div>
             <label for="system-proxy">系统代理</label>
-            <p v-if="proxyRecoveryNeeded">系统代理需要恢复，请查看下方提示。</p>
+            <p v-if="proxyMode === 'mobile'">手机模式不会修改系统代理，避免抓取电脑请求。</p>
+            <p v-else-if="proxyRecoveryNeeded">系统代理需要恢复，请查看下方提示。</p>
             <p v-else-if="proxyStatus.state === 'running'">
               {{ systemProxyEnabled ? '本机 HTTP/HTTPS 流量已接入。' : '当前未修改本机系统代理。' }}
             </p>
@@ -147,7 +179,7 @@ function updateSystemProxy(event: Event) {
               id="system-proxy"
               type="checkbox"
               :checked="systemProxyChecked"
-              :disabled="busy || proxyRecoveryNeeded"
+              :disabled="busy || proxyRecoveryNeeded || proxyMode === 'mobile'"
               @change="updateSystemProxy"
             />
             <span aria-hidden="true" />

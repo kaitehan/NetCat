@@ -1,6 +1,6 @@
 [package]
 name = "netcat"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local HTTP/HTTPS capture and mock proxy"
 authors = ["kaite han"]
 edition = "2021"

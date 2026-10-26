@@ -6,7 +6,7 @@ use netcat_lib::{
     export::{build_curl, build_exchange_copy, build_har},
     models::{
         DiagnosticLevel, DiagnosticLog, DiagnosticScope, MatchKind, MockRule, ProxyConfig,
-        ProxyStatus, TrafficCopyKind, TrafficDraft,
+        ProxyStatus, TrafficCopyKind, TrafficDraft, TrafficOrigin,
     },
     proxy::parse_lsof_listener,
     rules::{select_mock, validate_rule, RuntimeMockRules},
@@ -59,6 +59,9 @@ fn draft(index: usize, response_body: Vec<u8>) -> TrafficDraft {
         response_body,
         content_type: Some("application/octet-stream".into()),
         mocked: false,
+        origin: TrafficOrigin::Computer,
+        device_token: None,
+        device_name: None,
         source_exchange_id: None,
         matched_mock_rule_id: None,
         error: None,

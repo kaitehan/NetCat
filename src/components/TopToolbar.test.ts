@@ -5,6 +5,7 @@ import type { ProxyStatus } from '../shared/types'
 
 const stoppedStatus: ProxyStatus = {
   state: 'stopped',
+  mode: 'computer',
   bindAddress: null,
   port: 28086,
   lanIp: null,

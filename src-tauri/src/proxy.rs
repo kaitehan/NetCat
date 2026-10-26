@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -30,9 +30,11 @@ use crate::{
     error::AppError,
     export::filtered_request_headers,
     models::{
-        DiagnosticLevel, DiagnosticLog, DiagnosticScope, MockRule, ProxyConfig, ProxyState,
-        ProxyStatus, ReplayMode, ReplayRequest, ReplayResult, TrafficDraft, TrafficSummary,
+        DiagnosticLevel, DiagnosticLog, DiagnosticScope, MockRule, ProxyConfig, ProxyMode,
+        ProxyState, ProxyStatus, ReplayMode, ReplayRequest, ReplayResult, TrafficDraft,
+        TrafficOrigin, TrafficSummary,
     },
+    pairing::{NoopPairingEventSink, PairingService},
     platform::PortInspector,
     rules::RuntimeMockRules,
     storage::Store,
@@ -68,8 +70,10 @@ pub struct ProxyService {
     status: RwLock<ProxyStatus>,
     shutdown: Mutex<Option<oneshot::Sender<()>>>,
     task: Mutex<Option<JoinHandle<Result<(), hudsucker::Error>>>>,
+    pairing_cleanup_task: Mutex<Option<JoinHandle<()>>>,
     event_sink: Arc<dyn ProxyEventSink>,
     port_inspector: Arc<dyn PortInspector>,
+    pairing: Arc<PairingService>,
 }
 
 impl ProxyService {
@@ -82,6 +86,19 @@ impl ProxyService {
         event_sink: Arc<dyn ProxyEventSink>,
         port_inspector: Arc<dyn PortInspector>,
     ) -> Self {
+        let pairing = Arc::new(PairingService::new(
+            Arc::clone(&store),
+            Arc::new(NoopPairingEventSink),
+        ));
+        Self::with_pairing_service(store, event_sink, port_inspector, pairing)
+    }
+
+    pub fn with_pairing_service(
+        store: Arc<Store>,
+        event_sink: Arc<dyn ProxyEventSink>,
+        port_inspector: Arc<dyn PortInspector>,
+        pairing: Arc<PairingService>,
+    ) -> Self {
         Self {
             store,
             rules: Arc::new(RwLock::new(RuntimeMockRules::default())),
@@ -89,8 +106,10 @@ impl ProxyService {
             status: RwLock::new(ProxyStatus::default()),
             shutdown: Mutex::new(None),
             task: Mutex::new(None),
+            pairing_cleanup_task: Mutex::new(None),
             event_sink,
             port_inspector,
+            pairing,
         }
     }
 
@@ -199,6 +218,9 @@ impl ProxyService {
             response_body: Vec::new(),
             content_type: None,
             mocked: false,
+            origin: TrafficOrigin::Replay,
+            device_token: original.summary.device_token.clone(),
+            device_name: original.summary.device_name.clone(),
             source_exchange_id: Some(request.source_exchange_id),
             matched_mock_rule_id: None,
             error: None,
@@ -233,7 +255,7 @@ impl ProxyService {
                 if rule.delay_ms > 0 {
                     tokio::time::sleep(Duration::from_millis(rule.delay_ms)).await;
                 }
-                let response = build_mock_response(&rule).map_err(|error| {
+                let response = build_mock_response(&rule).inspect_err(|error| {
                     self.event_sink.diagnostic_log(
                         &DiagnosticLog::new(
                             DiagnosticLevel::Error,
@@ -245,7 +267,6 @@ impl ProxyService {
                         .with_detail("ruleId", rule.id.clone())
                         .with_detail("errorCode", error.code.clone()),
                     );
-                    error
                 })?;
                 let mut completed = base;
                 completed.status = Some(response.status().as_u16());
@@ -406,11 +427,12 @@ impl ProxyService {
                 "正在启动代理",
             )
             .with_detail("port", config.port)
-            .with_detail("allowLan", config.allow_lan)
+            .with_detail("mode", proxy_mode_name(config.mode))
             .with_detail("captureEnabled", config.capture_enabled),
         );
         self.update_status(ProxyStatus {
             state: ProxyState::Starting,
+            mode: config.mode,
             bind_address: None,
             port: config.port,
             lan_ip: None,
@@ -419,7 +441,33 @@ impl ProxyService {
         self.refresh_rules()?;
         self.set_capture_enabled(config.capture_enabled);
 
-        let bind_ip = if config.allow_lan {
+        let discovered = if config.mode == ProxyMode::Mobile {
+            (|| {
+                let lan_ip = local_lan_ip().ok_or_else(|| {
+                    AppError::new("LAN_ADDRESS_UNAVAILABLE", "未找到可用的局域网地址")
+                        .with_action("请连接可信 Wi-Fi 后重试")
+                })?;
+                let local_addresses = local_ip_address::list_afinet_netifas()
+                    .map_err(|error| {
+                        AppError::new("LOCAL_ADDRESS_DISCOVERY_FAILED", "无法识别本机网络地址")
+                            .with_detail(error.to_string())
+                    })?
+                    .into_iter()
+                    .map(|(_, ip)| ip)
+                    .collect::<HashSet<_>>();
+                Ok::<_, AppError>((Some(lan_ip), Arc::new(local_addresses)))
+            })()
+        } else {
+            Ok((None, Arc::new(HashSet::new())))
+        };
+        let (lan_ip, local_addresses) = match discovered {
+            Ok(value) => value,
+            Err(error) => {
+                self.fail_status(config.port, error.message.clone());
+                return Err(error);
+            }
+        };
+        let bind_ip = if config.mode == ProxyMode::Mobile {
             Ipv4Addr::UNSPECIFIED
         } else {
             Ipv4Addr::LOCALHOST
@@ -464,7 +512,9 @@ impl ProxyService {
             store: Arc::clone(&self.store),
             rules: Arc::clone(&self.rules),
             capture_enabled: Arc::clone(&self.capture_enabled),
-            allow_lan: config.allow_lan,
+            mode: config.mode,
+            local_addresses,
+            pairing: Arc::clone(&self.pairing),
             certificate_pem: Arc::new(certificate_pem),
             event_sink: Arc::clone(&self.event_sink),
             persistence,
@@ -486,9 +536,19 @@ impl ProxyService {
             })?;
         *self.shutdown.lock().await = Some(shutdown_tx);
         *self.task.lock().await = Some(tokio::spawn(proxy.start()));
-        let lan_ip = config.allow_lan.then(local_lan_ip).flatten();
+        if config.mode == ProxyMode::Mobile {
+            let pairing = Arc::clone(&self.pairing);
+            *self.pairing_cleanup_task.lock().await = Some(tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
+                loop {
+                    interval.tick().await;
+                    let _ = pairing.cleanup_expired_at(Utc::now());
+                }
+            }));
+        }
         let status = ProxyStatus {
             state: ProxyState::Running,
+            mode: config.mode,
             bind_address: Some(address.ip().to_string()),
             port: address.port(),
             lan_ip,
@@ -504,13 +564,14 @@ impl ProxyService {
             )
             .with_detail("bindAddress", address.ip().to_string())
             .with_detail("port", address.port())
-            .with_detail("allowLan", config.allow_lan),
+            .with_detail("mode", proxy_mode_name(config.mode)),
         );
         Ok(status)
     }
 
     pub async fn stop(&self) -> Result<ProxyStatus, AppError> {
         if self.status().state == ProxyState::Stopped {
+            self.pairing.disconnect_all()?;
             return Ok(self.status());
         }
         let current = self.status();
@@ -535,7 +596,15 @@ impl ProxyService {
                 task.abort();
             }
         }
-        let status = ProxyStatus::default();
+        if let Some(task) = self.pairing_cleanup_task.lock().await.take() {
+            task.abort();
+        }
+        self.pairing.disconnect_all()?;
+        let status = ProxyStatus {
+            mode: current.mode,
+            port: current.port,
+            ..ProxyStatus::default()
+        };
         self.update_status(status.clone());
         self.event_sink.diagnostic_log(&DiagnosticLog::new(
             DiagnosticLevel::Info,
@@ -554,6 +623,7 @@ impl ProxyService {
     fn fail_status(&self, port: u16, error: String) {
         self.update_status(ProxyStatus {
             state: ProxyState::Error,
+            mode: self.status().mode,
             bind_address: None,
             port,
             lan_ip: None,
@@ -571,6 +641,9 @@ struct PendingExchange {
     host: String,
     request_headers: BTreeMap<String, String>,
     request_body: Vec<u8>,
+    origin: TrafficOrigin,
+    device_token: Option<String>,
+    device_name: Option<String>,
     initial_persistence: Option<JoinHandle<()>>,
 }
 
@@ -578,7 +651,9 @@ struct CaptureHandler {
     store: Arc<Store>,
     rules: Arc<RwLock<RuntimeMockRules>>,
     capture_enabled: Arc<AtomicBool>,
-    allow_lan: bool,
+    mode: ProxyMode,
+    local_addresses: Arc<HashSet<IpAddr>>,
+    pairing: Arc<PairingService>,
     certificate_pem: Arc<Vec<u8>>,
     event_sink: Arc<dyn ProxyEventSink>,
     persistence: mpsc::Sender<PersistenceJob>,
@@ -591,7 +666,9 @@ impl Clone for CaptureHandler {
             store: Arc::clone(&self.store),
             rules: Arc::clone(&self.rules),
             capture_enabled: Arc::clone(&self.capture_enabled),
-            allow_lan: self.allow_lan,
+            mode: self.mode,
+            local_addresses: Arc::clone(&self.local_addresses),
+            pairing: Arc::clone(&self.pairing),
             certificate_pem: Arc::clone(&self.certificate_pem),
             event_sink: Arc::clone(&self.event_sink),
             persistence: self.persistence.clone(),
@@ -606,21 +683,18 @@ impl HttpHandler for CaptureHandler {
         context: &HttpContext,
         request: Request<Body>,
     ) -> RequestOrResponse {
-        if self.allow_lan && !is_private_client(context.client_addr.ip()) {
-            return simple_response(StatusCode::FORBIDDEN, "仅允许同一私有网络中的设备连接").into();
+        let client_ip = context.client_addr.ip();
+        if self.mode == ProxyMode::Mobile
+            && !is_allowed_mobile_client(client_ip, &self.local_addresses)
+        {
+            return simple_response(StatusCode::FORBIDDEN, "仅允许远端私有网络设备连接").into();
         }
-        if request.uri().path() == HEALTH_PATH {
-            let body = r#"{"status":"ok","service":"netcat"}"#;
-            let mut response = Response::new(Body::from(body));
-            *response.status_mut() = StatusCode::OK;
-            response
-                .headers_mut()
-                .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-            response.headers_mut().insert(
-                CONTENT_LENGTH,
-                HeaderValue::from_str(&body.len().to_string()).expect("valid length"),
-            );
-            return response.into();
+        if self.mode == ProxyMode::Mobile && request.uri().path().starts_with("/__netcat/pair/") {
+            let raw = request.uri().path().trim_start_matches("/__netcat/pair/");
+            return match self.pairing.consume_challenge(raw, client_ip) {
+                Ok(device) => pairing_success_response(&device.name).into(),
+                Err(error) => simple_response(StatusCode::BAD_REQUEST, &error.message).into(),
+            };
         }
         if request.uri().path() == CA_DOWNLOAD_PATH {
             let mut response = Response::new(Body::from(self.certificate_pem.as_ref().clone()));
@@ -636,7 +710,29 @@ impl HttpHandler for CaptureHandler {
             );
             return response.into();
         }
-
+        let identity = if self.mode == ProxyMode::Mobile {
+            match self.pairing.authorize(client_ip) {
+                Some(identity) => Some(identity),
+                None => {
+                    return simple_response(StatusCode::FORBIDDEN, "设备尚未配对").into();
+                }
+            }
+        } else {
+            None
+        };
+        if request.uri().path() == HEALTH_PATH {
+            let body = r#"{"status":"ok","service":"netcat"}"#;
+            let mut response = Response::new(Body::from(body));
+            *response.status_mut() = StatusCode::OK;
+            response
+                .headers_mut()
+                .insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+            response.headers_mut().insert(
+                CONTENT_LENGTH,
+                HeaderValue::from_str(&body.len().to_string()).expect("valid length"),
+            );
+            return response.into();
+        }
         let (parts, body) = request.into_parts();
         let request_body = match body.collect().await {
             Ok(body) => body.to_bytes().to_vec(),
@@ -672,6 +768,13 @@ impl HttpHandler for CaptureHandler {
             host,
             request_headers,
             request_body: request_body.clone(),
+            origin: if self.mode == ProxyMode::Mobile {
+                TrafficOrigin::Mobile
+            } else {
+                TrafficOrigin::Computer
+            },
+            device_token: identity.as_ref().map(|value| value.device_token.clone()),
+            device_name: identity.map(|value| value.device_name),
             initial_persistence: None,
         };
         if self.capture_enabled.load(Ordering::Relaxed) {
@@ -811,6 +914,13 @@ fn replay_mode_name(mode: ReplayMode) -> &'static str {
     }
 }
 
+fn proxy_mode_name(mode: ProxyMode) -> &'static str {
+    match mode {
+        ProxyMode::Computer => "computer",
+        ProxyMode::Mobile => "mobile",
+    }
+}
+
 impl CaptureHandler {
     fn record(
         &self,
@@ -843,6 +953,9 @@ impl CaptureHandler {
             response_body,
             content_type,
             mocked,
+            origin: pending.origin,
+            device_token: pending.device_token,
+            device_name: pending.device_name,
             source_exchange_id: None,
             matched_mock_rule_id,
             error,
@@ -893,6 +1006,9 @@ impl PendingExchange {
             response_body: Vec::new(),
             content_type: None,
             mocked: false,
+            origin: self.origin,
+            device_token: self.device_token.clone(),
+            device_name: self.device_name.clone(),
             source_exchange_id: None,
             matched_mock_rule_id: None,
             error: None,
@@ -1010,6 +1126,24 @@ fn simple_response(status: StatusCode, message: &str) -> Response<Body> {
         .expect("static response is valid")
 }
 
+fn pairing_success_response(device_name: &str) -> Response<Body> {
+    let escaped_name = device_name
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;");
+    let body = format!(
+        "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>NetCat 配对成功</title><body><main><h1>配对成功</h1><p>{escaped_name} 已连接，可以开始抓包。</p><p><a href=\"{CA_DOWNLOAD_PATH}\">下载 HTTPS CA 证书</a></p></main></body></html>"
+    );
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(CONTENT_LENGTH, body.len().to_string())
+        .body(Body::from(body))
+        .expect("static pairing response is valid")
+}
+
 pub fn parse_lsof_listener(output: &str) -> Option<String> {
     let mut lines = output.lines();
     lines.next()?;
@@ -1029,15 +1163,86 @@ fn headers_to_map(headers: &hudsucker::hyper::HeaderMap) -> BTreeMap<String, Str
         .collect()
 }
 
+fn is_private_client(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => ip.is_private() || ip.is_loopback(),
+        IpAddr::V6(ip) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
+    }
+}
+
+fn is_allowed_mobile_client(ip: IpAddr, local_addresses: &HashSet<IpAddr>) -> bool {
+    is_private_client(ip) && !ip.is_loopback() && !local_addresses.contains(&ip)
+}
+
+pub fn build_mock_response(rule: &MockRule) -> Result<Response<Body>, AppError> {
+    let status = StatusCode::from_u16(rule.status).map_err(|error| {
+        AppError::new("INVALID_STATUS", "Mock 状态码无效").with_detail(error.to_string())
+    })?;
+    let mut response = Response::builder()
+        .status(status)
+        .body(Body::from(rule.response_body.clone()))
+        .map_err(|error| {
+            AppError::new("MOCK_RESPONSE_ERROR", "无法构建 Mock 响应")
+                .with_detail(error.to_string())
+        })?;
+
+    for (name, value) in &rule.response_headers {
+        let name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+            AppError::new("INVALID_HEADER", "Mock 响应头名称无效").with_detail(error.to_string())
+        })?;
+        if name == CONTENT_LENGTH || name == TRANSFER_ENCODING {
+            continue;
+        }
+        let value = HeaderValue::from_str(value).map_err(|error| {
+            AppError::new("INVALID_HEADER", "Mock 响应头内容无效").with_detail(error.to_string())
+        })?;
+        response.headers_mut().insert(name, value);
+    }
+    response.headers_mut().remove(TRANSFER_ENCODING);
+    response.headers_mut().insert(
+        CONTENT_LENGTH,
+        HeaderValue::from_str(&rule.response_body.len().to_string())
+            .expect("body length is always a valid header value"),
+    );
+    Ok(response)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::platform::{PortInspector, PortProcess};
+    use std::collections::HashSet;
 
     struct FixturePorts {
         port: u16,
         name: Option<String>,
     }
+
+    #[test]
+    fn mobile_source_policy_accepts_only_remote_private_clients() {
+        let local_addresses = HashSet::from([
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            "192.168.1.8".parse().unwrap(),
+        ]);
+
+        assert!(is_allowed_mobile_client(
+            "192.168.1.25".parse().unwrap(),
+            &local_addresses
+        ));
+        assert!(!is_allowed_mobile_client(
+            "127.0.0.1".parse().unwrap(),
+            &local_addresses
+        ));
+        assert!(!is_allowed_mobile_client(
+            "192.168.1.8".parse().unwrap(),
+            &local_addresses
+        ));
+        assert!(!is_allowed_mobile_client(
+            "8.8.8.8".parse().unwrap(),
+            &local_addresses
+        ));
+    }
+
     impl PortInspector for FixturePorts {
         fn listener(&self, port: u16) -> Option<PortProcess> {
             assert_eq!(port, self.port);
@@ -1085,44 +1290,4 @@ mod tests {
             );
         }
     }
-}
-
-fn is_private_client(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ip) => ip.is_private() || ip.is_loopback(),
-        IpAddr::V6(ip) => ip.is_loopback() || (ip.segments()[0] & 0xfe00) == 0xfc00,
-    }
-}
-
-pub fn build_mock_response(rule: &MockRule) -> Result<Response<Body>, AppError> {
-    let status = StatusCode::from_u16(rule.status).map_err(|error| {
-        AppError::new("INVALID_STATUS", "Mock 状态码无效").with_detail(error.to_string())
-    })?;
-    let mut response = Response::builder()
-        .status(status)
-        .body(Body::from(rule.response_body.clone()))
-        .map_err(|error| {
-            AppError::new("MOCK_RESPONSE_ERROR", "无法构建 Mock 响应")
-                .with_detail(error.to_string())
-        })?;
-
-    for (name, value) in &rule.response_headers {
-        let name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
-            AppError::new("INVALID_HEADER", "Mock 响应头名称无效").with_detail(error.to_string())
-        })?;
-        if name == CONTENT_LENGTH || name == TRANSFER_ENCODING {
-            continue;
-        }
-        let value = HeaderValue::from_str(value).map_err(|error| {
-            AppError::new("INVALID_HEADER", "Mock 响应头内容无效").with_detail(error.to_string())
-        })?;
-        response.headers_mut().insert(name, value);
-    }
-    response.headers_mut().remove(TRANSFER_ENCODING);
-    response.headers_mut().insert(
-        CONTENT_LENGTH,
-        HeaderValue::from_str(&rule.response_body.len().to_string())
-            .expect("body length is always a valid header value"),
-    );
-    Ok(response)
 }

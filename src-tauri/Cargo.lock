@@ -2561,7 +2561,7 @@ dependencies = [
 
 [[package]]
 name = "netcat"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "brotli 9.0.0",

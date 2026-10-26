@@ -84,7 +84,7 @@ impl DiagnosticLog {
 #[serde(rename_all = "camelCase")]
 pub struct ProxyConfig {
     pub port: u16,
-    pub allow_lan: bool,
+    pub mode: ProxyMode,
     pub capture_enabled: bool,
 }
 
@@ -92,10 +92,17 @@ impl Default for ProxyConfig {
     fn default() -> Self {
         Self {
             port: 28086,
-            allow_lan: false,
+            mode: ProxyMode::Computer,
             capture_enabled: true,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ProxyMode {
+    Computer,
+    Mobile,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -112,6 +119,7 @@ pub enum ProxyState {
 #[serde(rename_all = "camelCase")]
 pub struct ProxyStatus {
     pub state: ProxyState,
+    pub mode: ProxyMode,
     pub bind_address: Option<String>,
     pub port: u16,
     pub lan_ip: Option<String>,
@@ -122,12 +130,44 @@ impl Default for ProxyStatus {
     fn default() -> Self {
         Self {
             state: ProxyState::Stopped,
+            mode: ProxyMode::Computer,
             bind_address: None,
             port: 28086,
             lan_ip: None,
             error: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TrafficOrigin {
+    Computer,
+    Mobile,
+    Replay,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PairedDevice {
+    pub device_token: String,
+    pub name: String,
+    pub bound_ip: String,
+    pub created_at: String,
+    pub last_seen_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PairingChallenge {
+    pub url: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceIdentity {
+    pub device_token: String,
+    pub device_name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -194,6 +234,9 @@ pub struct TrafficDraft {
     pub response_body: Vec<u8>,
     pub content_type: Option<String>,
     pub mocked: bool,
+    pub origin: TrafficOrigin,
+    pub device_token: Option<String>,
+    pub device_name: Option<String>,
     pub source_exchange_id: Option<String>,
     pub matched_mock_rule_id: Option<String>,
     pub error: Option<String>,
@@ -213,6 +256,9 @@ pub struct TrafficSummary {
     pub content_type: Option<String>,
     pub mocked: bool,
     pub truncated: bool,
+    pub origin: TrafficOrigin,
+    pub device_token: Option<String>,
+    pub device_name: Option<String>,
     pub source_exchange_id: Option<String>,
     pub matched_mock_rule_id: Option<String>,
     pub error: Option<String>,

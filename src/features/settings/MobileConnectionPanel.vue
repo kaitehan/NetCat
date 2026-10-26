@@ -1,47 +1,75 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { CheckCircle2, KeyRound, Play, Smartphone, Square } from '@lucide/vue'
+import { KeyRound, Laptop, Pencil, Play, RefreshCw, Smartphone, Square, Trash2, Unplug } from '@lucide/vue'
 import QrcodeVue from 'qrcode.vue'
-import type { CaStatus, ProxyStatus } from '../../shared/types'
+import type { CaStatus, HistoricalDevice, PairedDevice, PairingChallenge, ProxyMode, ProxyStatus } from '../../shared/types'
 
-const { proxyStatus, port, allowLan, lanIp, caStatus, busy } = defineProps<{
+const props = defineProps<{
   proxyStatus: ProxyStatus
+  proxyMode: ProxyMode
   port: number
-  allowLan: boolean
   lanIp: string | null
   caStatus: CaStatus
+  pairedDevices: readonly PairedDevice[]
+  historicalDevices: readonly HistoricalDevice[]
+  pairingIdleTimeout: number
+  pairingChallenge: PairingChallenge | null
   busy: boolean
 }>()
 
 const emit = defineEmits<{
   updatePort: [value: number]
-  updateAllowLan: [value: boolean]
+  updateProxyMode: [value: ProxyMode]
+  updatePairingIdleTimeout: [value: number]
   toggleProxy: []
   generateCa: []
+  createPairingChallenge: []
+  renameDevice: [deviceToken: string, name: string]
+  rePairDevice: [deviceToken: string]
+  disconnectDevice: [deviceToken: string]
+  deleteDevice: [deviceToken: string]
 }>()
 
-const address = computed(() => proxyStatus.lanIp ?? lanIp)
-const connectionAddress = computed(() => address.value ? `${address.value}:${port}` : null)
-const certificateUrl = computed(() => allowLan && address.value && caStatus.generated
-  ? `http://${address.value}:${port}/__netcat/ca.crt`
-  : null)
-const isRunning = computed(() => proxyStatus.state === 'running')
-const isTransitioning = computed(() => proxyStatus.state === 'starting' || proxyStatus.state === 'stopping')
+const address = computed(() => props.proxyStatus.lanIp ?? props.lanIp)
+const connectionAddress = computed(() => address.value ? `${address.value}:${props.port}` : null)
+const isRunning = computed(() => props.proxyStatus.state === 'running')
+const isTransitioning = computed(() => props.proxyStatus.state === 'starting' || props.proxyStatus.state === 'stopping')
+const mobileMode = computed(() => props.proxyMode === 'mobile')
+const deviceRows = computed(() => [
+  ...props.pairedDevices.map((device) => ({
+    deviceToken: device.deviceToken,
+    name: device.name,
+    detail: device.boundIp,
+    online: true
+  })),
+  ...props.historicalDevices
+    .filter((device) => !props.pairedDevices.some((online) => online.deviceToken === device.deviceToken))
+    .map((device) => ({
+      deviceToken: device.deviceToken,
+      name: device.name,
+      detail: `${device.requestCount} 条历史请求`,
+      online: false
+    }))
+])
 const actionLabel = computed(() => {
-  if (proxyStatus.state === 'starting') {
-    return '正在启动'
-  }
-  if (proxyStatus.state === 'stopping') {
-    return '正在停止'
-  }
+  if (props.proxyStatus.state === 'starting') return '正在启动'
+  if (props.proxyStatus.state === 'stopping') return '正在停止'
   return isRunning.value ? '停止代理' : '启动代理'
 })
 
 function updatePort(event: Event) {
   const value = Number((event.target as HTMLInputElement).value)
-  if (Number.isInteger(value) && value >= 1 && value <= 65535) {
-    emit('updatePort', value)
-  }
+  if (Number.isInteger(value) && value >= 1 && value <= 65535) emit('updatePort', value)
+}
+
+function updateTimeout(event: Event) {
+  const value = Number((event.target as HTMLInputElement).value)
+  if (Number.isInteger(value) && value >= 5 && value <= 120) emit('updatePairingIdleTimeout', value)
+}
+
+function rename(device: { deviceToken: string; name: string }) {
+  const name = window.prompt('设备名称', device.name)?.trim()
+  if (name && name !== device.name) emit('renameDevice', device.deviceToken, name)
 }
 </script>
 
@@ -51,113 +79,100 @@ function updatePort(event: Event) {
       <Smartphone :size="18" />
       <div>
         <h2 id="mobile-connection-title">手机连接</h2>
-        <p>在同一 Wi-Fi 下连接手机，集中完成代理地址与 HTTPS 证书配置。</p>
+        <p>电脑与手机抓包互斥；手机模式只接收已配对设备的请求。</p>
       </div>
     </div>
+
+    <fieldset class="mode-control" :disabled="isRunning || isTransitioning">
+      <legend>抓包来源</legend>
+      <label :class="{ active: proxyMode === 'computer' }">
+        <input aria-label="电脑抓包" type="radio" name="proxy-mode" value="computer" :checked="proxyMode === 'computer'" @change="emit('updateProxyMode', 'computer')" />
+        <Laptop :size="15" />
+        <span><strong>电脑抓包</strong><small>仅监听本机请求</small></span>
+      </label>
+      <label :class="{ active: proxyMode === 'mobile' }">
+        <input aria-label="手机抓包" type="radio" name="proxy-mode" value="mobile" :checked="proxyMode === 'mobile'" @change="emit('updateProxyMode', 'mobile')" />
+        <Smartphone :size="15" />
+        <span><strong>手机抓包</strong><small>仅监听已配对手机</small></span>
+      </label>
+    </fieldset>
 
     <div class="control-row">
-      <div>
-        <label for="allow-lan">允许手机连接此代理</label>
-        <p>开启后，手机可通过电脑 IP 和端口接入并抓取 HTTP/HTTPS 请求。</p>
-      </div>
-      <label class="port-control" for="mobile-proxy-port">
+      <label class="number-control" for="mobile-proxy-port">
         <span>代理端口</span>
-        <input
-          id="mobile-proxy-port"
-          :value="port"
-          type="number"
-          min="1"
-          max="65535"
-          :disabled="isRunning"
-          @change="updatePort"
-        />
+        <input id="mobile-proxy-port" :value="port" type="number" min="1" max="65535" :disabled="isRunning" @change="updatePort" />
       </label>
-      <label class="switch-control">
-        <input
-          id="allow-lan"
-          type="checkbox"
-          :checked="allowLan"
-          :disabled="proxyStatus.state === 'running'"
-          @change="emit('updateAllowLan', ($event.target as HTMLInputElement).checked)"
-        />
-        <span aria-hidden="true" />
+      <label class="number-control" for="pairing-idle-timeout">
+        <span>空闲断开时间</span>
+        <input id="pairing-idle-timeout" aria-label="空闲断开时间" :value="pairingIdleTimeout" type="number" min="5" max="120" :disabled="busy" @change="updateTimeout" />
+        <small>分钟</small>
       </label>
+      <button type="button" class="proxy-action" :class="{ running: isRunning }" :disabled="busy || isTransitioning || !caStatus.generated || (mobileMode && !connectionAddress)" @click="emit('toggleProxy')">
+        <Square v-if="isRunning" :size="13" />
+        <Play v-else :size="14" />
+        {{ actionLabel }}
+      </button>
     </div>
 
-    <div v-if="!allowLan" class="disabled-state">
-      <Smartphone :size="18" />
-      <p>开启后，这里会显示手机代理地址、启动操作和证书二维码。</p>
-    </div>
-
-    <div v-else class="connection-workspace">
-      <div class="connection-summary">
-        <div class="connection-status">
-          <span :class="['status-dot', { active: isRunning }]" />
-          <div>
-            <strong>{{ isRunning ? '代理已就绪' : '等待启动代理' }}</strong>
-            <p>{{ isRunning ? '手机现在可以连接此代理。' : '完成下方准备后启动代理。' }}</p>
-          </div>
-        </div>
-
-        <div class="address-row">
-          <div>
-            <span>手机代理地址</span>
-            <code>{{ connectionAddress ?? '正在获取局域网地址' }}</code>
-          </div>
-        </div>
-
-        <div v-if="!caStatus.generated" class="preparation-row">
-          <KeyRound :size="16" />
-          <div>
-            <strong>先生成 HTTPS 证书</strong>
-            <p>代理需要本地 CA 才能启动并提供手机证书下载。</p>
-          </div>
-          <button type="button" class="secondary-action" :disabled="busy" @click="emit('generateCa')">
-            生成证书
-          </button>
-        </div>
-
-        <button
-          type="button"
-          class="proxy-action"
-          :class="{ running: isRunning }"
-          :disabled="busy || isTransitioning || !caStatus.generated || !connectionAddress"
-          @click="emit('toggleProxy')"
-        >
-          <Square v-if="isRunning" :size="13" />
-          <Play v-else :size="14" />
-          {{ actionLabel }}
-        </button>
+    <div v-if="!caStatus.generated" class="preparation-row">
+      <KeyRound :size="16" />
+      <div>
+        <strong>先生成 HTTPS 证书</strong>
+        <p>代理需要本地 CA 才能启动。</p>
       </div>
+      <button type="button" class="secondary-action" :disabled="busy" @click="emit('generateCa')">生成证书</button>
+    </div>
 
-      <div class="certificate-access">
-        <div v-if="certificateUrl" class="qr-code" aria-label="CA 证书下载二维码">
-          <QrcodeVue :value="certificateUrl" :size="120" level="M" render-as="svg" />
+    <div v-if="mobileMode" class="mobile-workspace">
+      <div class="pairing-access">
+        <div v-if="pairingChallenge" class="qr-code" aria-label="手机配对二维码">
+          <QrcodeVue :value="pairingChallenge.url" :size="120" level="M" render-as="svg" />
         </div>
         <div v-else class="qr-placeholder">
-          <KeyRound :size="24" />
-          <span>证书准备后显示二维码</span>
+          <Smartphone :size="24" />
+          <span>{{ isRunning ? '生成二维码后扫码配对' : '启动代理后可配对' }}</span>
         </div>
-        <div class="certificate-copy">
-          <span>手机 HTTPS 证书</span>
-          <strong>{{ caStatus.generated ? '扫码安装 CA 证书' : '等待生成 CA 证书' }}</strong>
-          <code v-if="certificateUrl">{{ certificateUrl }}</code>
-          <p v-if="!isRunning">二维码可提前查看，启动代理后手机才能下载。</p>
-          <p v-else><CheckCircle2 :size="13" />证书下载地址已可访问。</p>
+        <div class="pairing-copy">
+          <span>一次性设备配对</span>
+          <strong>{{ connectionAddress ?? '等待局域网地址' }}</strong>
+          <code v-if="pairingChallenge">{{ pairingChallenge.url }}</code>
+          <p>二维码 5 分钟内有效，使用一次后立即失效。</p>
+          <button type="button" class="secondary-action" :disabled="busy || !isRunning" @click="emit('createPairingChallenge')">
+            <RefreshCw :size="13" />
+            {{ pairingChallenge ? '刷新二维码' : '生成配对二维码' }}
+          </button>
         </div>
       </div>
 
-      <ol class="connection-steps">
-        <li><span>1</span>手机与电脑连接同一 Wi-Fi</li>
-        <li><span>2</span>将 Wi-Fi 代理设为上方地址</li>
-        <li><span>3</span>扫码安装并信任 HTTPS 证书</li>
-      </ol>
+      <div class="device-list">
+        <div class="device-list-heading">
+          <strong>设备</strong>
+          <span>{{ pairedDevices.length }} 在线</span>
+        </div>
+        <p v-if="!deviceRows.length" class="empty-devices">暂无设备</p>
+        <article v-for="device in deviceRows" :key="device.deviceToken" class="device-row">
+          <span :class="['online-dot', { offline: !device.online }]" :aria-label="device.online ? '在线' : '已断开'" />
+          <div>
+            <strong>{{ device.name }}</strong>
+            <small>{{ device.detail }}</small>
+          </div>
+          <div class="device-actions">
+            <button type="button" title="改名" :disabled="busy" @click="rename(device)"><Pencil :size="13" /></button>
+            <button type="button" title="重新配对" :disabled="busy || !isRunning" @click="emit('rePairDevice', device.deviceToken)"><RefreshCw :size="13" /></button>
+            <button v-if="device.online" type="button" title="断开设备" :disabled="busy" @click="emit('disconnectDevice', device.deviceToken)"><Unplug :size="13" /></button>
+            <button type="button" title="删除设备数据" :disabled="busy" @click="emit('deleteDevice', device.deviceToken)"><Trash2 :size="13" /></button>
+          </div>
+        </article>
+      </div>
     </div>
+
+    <p v-else class="computer-note">电脑模式仅监听 127.0.0.1，不接受局域网设备连接。</p>
   </section>
 </template>
 
 <style scoped>
 .mobile-panel {
+  padding-bottom: 14px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -169,50 +184,101 @@ function updatePort(event: Event) {
   color: var(--accent-strong);
 }
 
-.panel-heading h2 {
+.panel-heading h2,
+.device-list-heading strong {
   margin: 0;
   color: var(--text);
   font-size: 13px;
 }
 
 .panel-heading p,
-.control-row p,
-.connection-status p,
 .preparation-row p,
-.certificate-copy p {
+.pairing-copy p,
+.computer-note {
   margin: 4px 0 0;
   color: var(--text-muted);
   font-size: 10px;
   line-height: 1.5;
 }
 
-.control-row {
+.mode-control {
   display: grid;
-  min-height: 68px;
-  padding: 12px 2px;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 24px;
-  border-top: 1px solid var(--border-soft);
+  margin: 0;
+  padding: 0 0 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  border: 0;
 }
 
-.control-row label {
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.port-control {
-  display: grid;
-  gap: 5px;
-}
-
-.port-control span {
+.mode-control legend {
+  padding: 0 0 7px;
   color: var(--text-muted);
   font-size: 9px;
 }
 
-.port-control input {
+.mode-control label {
+  display: flex;
+  min-height: 52px;
+  padding: 8px 10px;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.mode-control label.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.mode-control input {
+  position: absolute;
+  opacity: 0;
+}
+
+.mode-control span {
+  display: grid;
+  gap: 2px;
+}
+
+.mode-control strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.mode-control small,
+.number-control small,
+.device-row small {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.control-row {
+  display: grid;
+  padding: 12px 0;
+  grid-template-columns: auto auto minmax(130px, 1fr);
+  align-items: end;
+  gap: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.number-control {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.number-control span {
+  grid-column: 1 / -1;
+}
+
+.number-control input {
   width: 92px;
   height: 30px;
   padding: 0 9px;
@@ -224,314 +290,190 @@ function updatePort(event: Event) {
   font-size: 11px;
 }
 
-.port-control input:disabled {
-  opacity: 0.5;
-}
-
-.switch-control {
-  position: relative;
-  display: inline-flex;
-  width: 36px;
-  height: 20px;
-}
-
-.switch-control input {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-}
-
-.switch-control span {
-  position: relative;
-  width: 36px;
-  height: 20px;
-  border-radius: 10px;
-  background: var(--border-strong);
-  transition: background 120ms ease;
-}
-
-.switch-control span::after {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--surface);
-  box-shadow: var(--shadow-active);
-  content: '';
-  transition: transform 120ms ease;
-}
-
-.switch-control input:checked + span {
-  background: var(--accent-strong);
-}
-
-.switch-control input:checked + span::after {
-  transform: translateX(16px);
-}
-
-.switch-control input:focus-visible + span {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.switch-control input:disabled + span {
-  opacity: 0.5;
-}
-
-.disabled-state {
-  display: flex;
-  min-height: 68px;
-  padding: 14px;
-  align-items: center;
-  gap: 9px;
-  border-top: 1px solid var(--border-soft);
-  color: var(--text-muted);
-}
-
-.disabled-state p {
-  margin: 0;
-  font-size: 10px;
-}
-
-.connection-workspace {
-  padding: 16px 0 18px;
-  border-top: 1px solid var(--border-soft);
-}
-
-.connection-summary {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 14px 18px;
-}
-
-.connection-status {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.connection-status strong,
-.preparation-row strong,
-.certificate-copy strong {
-  color: var(--text);
-  font-size: 11px;
-}
-
-.status-dot {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--warning);
-  box-shadow: 0 0 0 3px var(--warning-soft);
-}
-
-.status-dot.active {
-  background: var(--mock);
-  box-shadow: 0 0 0 3px var(--mock-soft);
-}
-
-.address-row {
-  display: grid;
-  grid-column: 1 / -1;
-  padding: 12px 0;
-  grid-template-columns: minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  border-top: 1px solid var(--border-soft);
-  border-bottom: 1px solid var(--border-soft);
-}
-
-.address-row span,
-.certificate-copy > span {
-  color: var(--text-muted);
-  font-size: 9px;
-  font-weight: 600;
-}
-
-.address-row code {
-  display: block;
-  margin-top: 4px;
-  color: var(--accent-strong);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.preparation-row {
-  display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  color: var(--warning);
-}
-
 .proxy-action,
 .secondary-action {
   display: inline-flex;
-  height: 32px;
+  height: 30px;
   padding: 0 12px;
   align-items: center;
   justify-content: center;
   gap: 6px;
+  border: 1px solid var(--accent);
   border-radius: var(--radius-control);
-  font-family: inherit;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.proxy-action {
-  grid-column: 2;
-  grid-row: 1;
-  border: 1px solid var(--accent-strong);
   background: var(--accent);
-  color: var(--on-accent);
+  color: white;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 650;
 }
 
 .proxy-action.running {
-  border-color: var(--border-strong);
-  background: var(--surface-raised);
-  color: var(--text-secondary);
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .secondary-action {
-  border: 1px solid var(--accent-strong);
-  background: var(--accent-soft);
+  background: transparent;
   color: var(--accent-strong);
 }
 
-.proxy-action:disabled,
-.secondary-action:disabled {
-  cursor: not-allowed;
+button:disabled,
+input:disabled {
+  cursor: default;
   opacity: 0.5;
 }
 
-.certificate-access {
+.preparation-row {
   display: grid;
-  margin-top: 16px;
-  grid-template-columns: 136px minmax(0, 1fr);
+  padding: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 16px;
+  gap: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+}
+
+.preparation-row strong,
+.pairing-copy strong,
+.device-row strong {
+  color: var(--text);
+  font-size: 10px;
+}
+
+.mobile-workspace {
+  display: grid;
+  margin-top: 4px;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 1fr);
+  gap: 12px;
+}
+
+.pairing-access,
+.device-list {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+}
+
+.pairing-access {
+  display: flex;
+  align-items: center;
+  gap: 14px;
 }
 
 .qr-code,
 .qr-placeholder {
   display: grid;
-  width: 136px;
-  height: 136px;
+  width: 128px;
+  height: 128px;
+  flex: 0 0 128px;
   place-items: center;
   border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-}
-
-.qr-code {
-  background: var(--qr-surface);
+  background: white;
 }
 
 .qr-placeholder {
-  align-content: center;
+  padding: 14px;
+  background: var(--surface);
+  color: var(--text-muted);
+  text-align: center;
+  font-size: 9px;
+}
+
+.pairing-copy {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.pairing-copy > span {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.pairing-copy code {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.device-list-heading {
+  display: flex;
+  min-height: 26px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.device-list-heading span {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+.empty-devices {
+  margin: 22px 0;
+  color: var(--text-muted);
+  text-align: center;
+  font-size: 10px;
+}
+
+.device-row {
+  display: grid;
+  min-height: 42px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
   gap: 8px;
-  background: var(--surface-raised);
+  border-top: 1px solid var(--border-soft);
+}
+
+.device-row > div:nth-child(2) {
+  display: grid;
+  gap: 2px;
+}
+
+.online-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.online-dot.offline {
+  background: var(--text-muted);
+}
+
+.device-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.device-actions button {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
   color: var(--text-muted);
 }
 
-.qr-placeholder span {
-  max-width: 100px;
-  text-align: center;
-  font-size: 9px;
-  line-height: 1.4;
+.device-actions button:hover {
+  background: var(--surface);
+  color: var(--text);
 }
 
-.certificate-copy {
-  min-width: 0;
+.computer-note {
+  padding: 10px 0 0;
 }
 
-.certificate-copy strong {
-  display: block;
-  margin-top: 5px;
-}
-
-.certificate-copy code {
-  display: block;
-  margin-top: 9px;
-  overflow-wrap: anywhere;
-  color: var(--accent-strong);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  line-height: 1.5;
-}
-
-.certificate-copy p {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.connection-steps {
-  display: grid;
-  margin: 16px 0 0;
-  padding: 14px 0 0;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  border-top: 1px solid var(--border-soft);
-  list-style: none;
-}
-
-.connection-steps li {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text-secondary);
-  font-size: 10px;
-  line-height: 1.4;
-}
-
-.connection-steps span {
-  display: grid;
-  width: 20px;
-  height: 20px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  color: var(--accent-strong);
-  font-family: var(--font-mono);
-  font-size: 9px;
-}
-
-@media (max-width: 620px) {
-  .control-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 14px;
-  }
-
-  .control-row > div:first-child {
-    grid-column: 1 / -1;
-  }
-
-  .port-control {
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: center;
-  }
-
-  .connection-summary,
-  .certificate-access,
-  .connection-steps {
+@media (max-width: 900px) {
+  .mobile-workspace {
     grid-template-columns: 1fr;
-  }
-
-  .proxy-action {
-    grid-column: 1;
-    grid-row: auto;
-    width: 100%;
-  }
-
-  .address-row {
-    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

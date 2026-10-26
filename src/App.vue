@@ -7,7 +7,9 @@ import TopToolbar from './components/TopToolbar.vue'
 import DisclaimerDialog from './features/onboarding/DisclaimerDialog.vue'
 import { sanitizeTrafficDetail } from './features/diagnostics/debug-bridge'
 import TrafficContextMenu, { type TrafficMenuAction } from './features/traffic/TrafficContextMenu.vue'
+import DeviceTabs from './features/traffic/DeviceTabs.vue'
 import TrafficTable from './features/traffic/TrafficTable.vue'
+import { filterTrafficByDevice, listTrafficDevices, type DeviceScope } from './features/traffic/device-filter'
 import { filterTraffic } from './features/traffic/traffic-filter'
 import { useNetCat } from './composables/useNetCat'
 import type {
@@ -51,6 +53,7 @@ const contextPosition = reactive({ x: 0, y: 0 })
 const diagnosticsOpen = shallowRef(false)
 const diagnosticDetail = shallowRef<DiagnosticTrafficDetail | null>(null)
 const diagnosticDetailLoading = shallowRef(false)
+const deviceScope = shallowRef<DeviceScope>('all')
 const filter = reactive<TrafficFilter>({
   query: '',
   method: 'ALL',
@@ -79,11 +82,18 @@ const hiddenTrafficIds = computed<ReadonlySet<string>>(() => new Set(
     .filter((row) => hiddenUrls.value.has(row.url) || hiddenHosts.value.has(row.host))
     .map((row) => row.id)
 ))
-const filteredTraffic = computed(() => filterTraffic(capture.traffic.value, filter))
+const trafficDevices = computed(() => listTrafficDevices(capture.traffic.value, capture.pairedDevices.value))
+const historicalDevices = computed(() => trafficDevices.value.map((device) => ({
+  deviceToken: device.token,
+  name: device.name,
+  requestCount: device.count
+})))
+const deviceTraffic = computed(() => filterTrafficByDevice(capture.traffic.value, deviceScope.value))
+const filteredTraffic = computed(() => filterTraffic(deviceTraffic.value, filter))
 const visibleTraffic = computed(() => showHidden.value
   ? filteredTraffic.value
   : filteredTraffic.value.filter((row) => !hiddenTrafficIds.value.has(row.id)))
-const hosts = computed(() => [...new Set(capture.traffic.value.map((row) => row.host))].sort())
+const hosts = computed(() => [...new Set(deviceTraffic.value.map((row) => row.host))].sort())
 const hostOptions = computed(() => [
   { value: '', label: '全部域名' },
   ...hosts.value.map((host) => ({ value: host, label: host }))
@@ -134,6 +144,19 @@ const contextDisabledReasons = computed<Partial<Record<TrafficMenuAction, string
 
 function setPort(value: number) {
   capture.port.value = value
+}
+
+function setDeviceScope(scope: DeviceScope) {
+  deviceScope.value = scope
+  const selected = capture.selectedDetail.value
+  if (selected && !filterTrafficByDevice([selected], scope).length) capture.clearSelection()
+}
+
+async function deleteDeviceData(deviceToken: string) {
+  const count = capture.traffic.value.filter((row) => row.deviceToken === deviceToken).length
+  if (!window.confirm(`确认断开该设备并删除其 ${count} 条请求吗？此操作无法撤销。`)) return
+  await capture.deletePairedDeviceData(deviceToken)
+  if (deviceScope.value === `device:${deviceToken}`) deviceScope.value = 'all'
 }
 
 function openMockEditor(rule: MockRule | null, initialFocus: 'headers' | 'body' | null = null) {
@@ -345,6 +368,13 @@ onMounted(() => void capture.initialize())
     <div class="app-body" :class="{ 'settings-layout': activeView === 'settings' || activeView === 'about' }">
       <main class="workspace" :class="{ 'settings-workspace': activeView === 'settings' || activeView === 'about' }">
         <template v-if="activeView === 'traffic'">
+          <DeviceTabs
+            :model-value="deviceScope"
+            :devices="trafficDevices"
+            :total-count="capture.traffic.value.length"
+            :local-count="capture.traffic.value.filter((row) => !row.deviceToken).length"
+            @update:model-value="setDeviceScope"
+          />
           <div class="filter-bar">
             <label class="search-control">
               <Search :size="14" />
@@ -395,21 +425,31 @@ onMounted(() => void capture.initialize())
           :private-key-state="capture.privateKeyState.value"
           :system-proxy-status="capture.systemProxyStatus.value"
           :proxy-status="capture.proxyStatus.value"
+          :proxy-mode="capture.proxyMode.value"
           :port="capture.port.value"
-          :allow-lan="capture.allowLan.value"
           :lan-ip="capture.lanIp.value"
+          :paired-devices="capture.pairedDevices.value"
+          :historical-devices="historicalDevices"
+          :pairing-idle-timeout="capture.pairingIdleTimeout.value"
+          :pairing-challenge="capture.pairingChallenge.value"
           :capture-enabled="capture.captureEnabled.value"
           :system-proxy-preferred="capture.systemProxyPreferred.value"
           :system-proxy-enabled="capture.systemProxyEnabled.value"
           :ca-status="capture.caStatus.value"
           :busy="capture.busy.value"
           @update-port="setPort"
-          @update-allow-lan="capture.setAllowLan"
+          @update-proxy-mode="capture.setProxyMode"
+          @update-pairing-idle-timeout="capture.setPairingIdleTimeout"
           @update-capture="capture.setCapture"
           @update-system-proxy="capture.setSystemProxy"
           @toggle-proxy="capture.toggleProxy"
           @restore-system-proxy="capture.restoreSystemProxy"
           @generate-ca="capture.generateCa"
+          @create-pairing-challenge="capture.createPairingChallenge()"
+          @rename-device="capture.renamePairedDevice"
+          @re-pair-device="capture.createPairingChallenge"
+          @disconnect-device="capture.disconnectPairedDevice"
+          @delete-device="deleteDeviceData"
           @export-ca="exportCa"
           @trust-ca="capture.trustCa"
           @remove-ca-trust="capture.removeCaTrust"
@@ -555,7 +595,7 @@ onMounted(() => void capture.initialize())
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: 42px minmax(0, 1fr);
+  grid-template-rows: 38px 42px minmax(0, 1fr);
   overflow: hidden;
   border-radius: var(--radius-panel);
   background: var(--surface);

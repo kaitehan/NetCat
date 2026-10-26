@@ -7,7 +7,7 @@ use std::{
 use futures_util::future::join_all;
 use netcat_lib::{
     ca::{CaManager, SecretStore},
-    models::{MatchKind, MockRule, ProxyConfig},
+    models::{MatchKind, MockRule, ProxyConfig, ProxyMode},
     proxy::ProxyService,
     storage::Store,
 };
@@ -61,7 +61,7 @@ async fn sustains_200_qps_for_60_seconds_and_keeps_5000_rows() {
         .start(
             ProxyConfig {
                 port: 0,
-                allow_lan: false,
+                mode: ProxyMode::Computer,
                 capture_enabled: true,
             },
             ca.load_issuer().unwrap(),

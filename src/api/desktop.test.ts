@@ -46,4 +46,20 @@ describe('desktopApi native platform commands', () => {
     expect(await commandMethod!()).toEqual(response)
     expect(invoke).toHaveBeenCalledWith(command)
   })
+
+  it('maps pairing lifecycle commands with their typed payloads', async () => {
+    window.__TAURI_INTERNALS__ = {} as Window['__TAURI_INTERNALS__']
+    vi.mocked(invoke)
+      .mockResolvedValueOnce(15)
+      .mockResolvedValueOnce({ url: 'http://192.168.1.8:28086/__netcat/pair/code', expiresAt: '2026-10-26T10:05:00Z' })
+      .mockResolvedValueOnce([])
+    const { desktopApi: nativeApi } = await import('./desktop')
+
+    expect(await nativeApi.setPairingIdleTimeout(15)).toBe(15)
+    expect(invoke).toHaveBeenNthCalledWith(1, 'set_pairing_idle_timeout', { minutes: 15 })
+    await nativeApi.createPairingChallenge('device-1')
+    expect(invoke).toHaveBeenNthCalledWith(2, 'create_pairing_challenge', { deviceToken: 'device-1' })
+    await nativeApi.listPairedDevices()
+    expect(invoke).toHaveBeenNthCalledWith(3, 'list_paired_devices')
+  })
 })

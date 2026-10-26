@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/vue'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import SettingsPage from './SettingsPage.vue'
 
 const props = {
@@ -9,14 +9,19 @@ const props = {
   systemProxyStatus: { managed: false, recoveryPending: false, conflict: false },
   proxyStatus: {
     state: 'stopped' as const,
+    mode: 'computer' as const,
     bindAddress: null,
     port: 28086,
     lanIp: null,
     error: null
   },
   port: 28086,
-  allowLan: false,
+  proxyMode: 'computer' as const,
   lanIp: '192.168.1.24',
+  pairedDevices: [],
+  historicalDevices: [],
+  pairingIdleTimeout: 15,
+  pairingChallenge: null,
   captureEnabled: true,
   systemProxyPreferred: true,
   systemProxyEnabled: false,
@@ -29,21 +34,71 @@ const props = {
 }
 
 describe('SettingsPage', () => {
-  it('keeps LAN setup, proxy startup and the certificate QR code in one mobile connection flow', async () => {
+  it('switches capture source while stopped and exposes the bounded idle timeout', async () => {
+    const { emitted } = render(SettingsPage, { props })
+
+    await fireEvent.click(screen.getByRole('radio', { name: '手机抓包' }))
+    expect(emitted().updateProxyMode).toEqual([['mobile']])
+    const timeout = screen.getByRole('spinbutton', { name: '空闲断开时间' })
+    expect(timeout).toHaveAttribute('min', '5')
+    expect(timeout).toHaveAttribute('max', '120')
+    await fireEvent.update(timeout, '30')
+    await fireEvent.change(timeout)
+    expect(emitted().updatePairingIdleTimeout).toEqual([[30]])
+  })
+
+  it('keeps proxy startup and one-time pairing in one mobile connection flow', async () => {
     const { emitted, rerender } = render(SettingsPage, { props })
 
     expect(screen.getByRole('heading', { name: '手机连接' })).toBeVisible()
-    await fireEvent.click(screen.getByRole('checkbox', { name: '允许手机连接此代理' }))
-    expect(emitted().updateAllowLan).toEqual([[true]])
-
-    await rerender({ ...props, allowLan: true })
+    await rerender({
+      ...props,
+      proxyMode: 'mobile',
+      proxyStatus: { ...props.proxyStatus, state: 'running', mode: 'mobile', lanIp: '192.168.1.24' },
+      pairingChallenge: { url: 'http://192.168.1.24:28086/__netcat/pair/once', expiresAt: '2026-10-26T12:00:00Z' }
+    })
     expect(screen.getByText('192.168.1.24:28086')).toBeVisible()
-    expect(screen.getByLabelText('CA 证书下载二维码')).toBeVisible()
-    await fireEvent.click(screen.getByRole('button', { name: '启动代理' }))
+    expect(screen.getByLabelText('手机配对二维码')).toBeVisible()
+    await fireEvent.click(screen.getByRole('button', { name: '停止代理' }))
     expect(emitted().toggleProxy).toHaveLength(1)
 
     await fireEvent.click(screen.getByRole('tab', { name: '证书配置' }))
     expect(screen.queryByRole('heading', { name: 'iOS / Android' })).not.toBeInTheDocument()
+  })
+
+  it('shows online and historical devices and forwards their management actions', async () => {
+    const prompt = vi.spyOn(window, 'prompt').mockReturnValue('开发手机')
+    const online = {
+      deviceToken: 'online-token',
+      name: '测试手机',
+      boundIp: '192.168.1.42',
+      createdAt: '2026-10-26T10:00:00Z',
+      lastSeenAt: '2026-10-26T10:10:00Z'
+    }
+    const { emitted } = render(SettingsPage, { props: {
+      ...props,
+      proxyMode: 'mobile',
+      proxyStatus: { ...props.proxyStatus, mode: 'mobile', state: 'running' },
+      pairedDevices: [online],
+      historicalDevices: [
+        { deviceToken: 'online-token', name: '测试手机', requestCount: 2 },
+        { deviceToken: 'history-token', name: '历史手机', requestCount: 3 }
+      ]
+    } })
+
+    expect(screen.getByText('192.168.1.42')).toBeVisible()
+    expect(screen.getByText('3 条历史请求')).toBeVisible()
+    expect(screen.getByRole('checkbox', { name: '系统代理' })).toBeDisabled()
+    await fireEvent.click(screen.getAllByRole('button', { name: '改名' })[0])
+    await fireEvent.click(screen.getAllByRole('button', { name: '重新配对' })[1])
+    await fireEvent.click(screen.getByRole('button', { name: '断开设备' }))
+    await fireEvent.click(screen.getAllByRole('button', { name: '删除设备数据' })[1])
+
+    expect(emitted().renameDevice).toEqual([['online-token', '开发手机']])
+    expect(emitted().rePairDevice).toEqual([['history-token']])
+    expect(emitted().disconnectDevice).toEqual([['online-token']])
+    expect(emitted().deleteDevice).toEqual([['history-token']])
+    prompt.mockRestore()
   })
 
   it('shows proxy conflicts and requests recovery without reporting the proxy as enabled', async () => {

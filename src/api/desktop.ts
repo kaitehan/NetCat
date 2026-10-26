@@ -12,6 +12,8 @@ import type {
   MockRule,
   MockRuleTestResult,
   PlatformInfo,
+  PairedDevice,
+  PairingChallenge,
   ProxyConfig,
   ProxyStatus,
   ReplayMode,
@@ -30,6 +32,7 @@ export type DesktopEvent =
   | 'traffic-updated'
   | 'storage-warning'
   | 'diagnostic-log'
+  | 'paired-devices-changed'
 
 export interface DesktopApi {
   getPlatformInfo(): Promise<PlatformInfo>
@@ -43,6 +46,13 @@ export interface DesktopApi {
   startProxy(config: ProxyConfig): Promise<ProxyStatus>
   stopProxy(): Promise<ProxyStatus>
   setCaptureEnabled(enabled: boolean): Promise<void>
+  getPairingIdleTimeout(): Promise<number>
+  setPairingIdleTimeout(minutes: number): Promise<number>
+  listPairedDevices(): Promise<PairedDevice[]>
+  createPairingChallenge(deviceToken?: string | null): Promise<PairingChallenge>
+  renamePairedDevice(deviceToken: string, name: string): Promise<PairedDevice>
+  disconnectPairedDevice(deviceToken: string): Promise<void>
+  deletePairedDeviceData(deviceToken: string): Promise<number>
   getCaStatus(): Promise<CaStatus>
   generateCa(): Promise<CaStatus>
   exportCa(): Promise<void>
@@ -102,6 +112,9 @@ const browserRows: TrafficSummary[] = [
     contentType: 'application/json',
     mocked: true,
     truncated: false,
+    origin: 'mobile',
+    deviceToken: 'preview-phone-online',
+    deviceName: '测试手机',
     error: null
   },
   {
@@ -116,6 +129,9 @@ const browserRows: TrafficSummary[] = [
     contentType: 'image/png',
     mocked: false,
     truncated: false,
+    origin: 'mobile',
+    deviceToken: 'preview-phone-history',
+    deviceName: '历史手机',
     error: null
   },
   {
@@ -153,11 +169,27 @@ const browserMocks: MockRule[] = [
 
 let browserStatus: ProxyStatus = {
   state: 'stopped',
+  mode: 'computer',
   bindAddress: null,
   port: 28086,
   lanIp: null,
   error: null
 }
+
+let browserPairingIdleTimeout = 15
+const browserPairedDevices: PairedDevice[] = [{
+  deviceToken: 'preview-phone-online',
+  name: '测试手机',
+  boundIp: '192.168.1.42',
+  createdAt: '2026-10-23T10:00:00Z',
+  lastSeenAt: '2026-10-23T10:18:12Z'
+}, {
+  deviceToken: 'preview-phone-empty',
+  name: '新手机',
+  boundIp: '192.168.1.43',
+  createdAt: '2026-10-23T10:17:00Z',
+  lastSeenAt: '2026-10-23T10:17:00Z'
+}]
 
 const browserApi: DesktopApi = {
   async getPlatformInfo() {
@@ -187,9 +219,10 @@ const browserApi: DesktopApi = {
   async startProxy(config) {
     browserStatus = {
       state: 'running',
-      bindAddress: config.allowLan ? '0.0.0.0' : '127.0.0.1',
+      mode: config.mode,
+      bindAddress: config.mode === 'mobile' ? '0.0.0.0' : '127.0.0.1',
       port: config.port,
-      lanIp: config.allowLan ? '192.168.1.24' : null,
+      lanIp: config.mode === 'mobile' ? '192.168.1.24' : null,
       error: null
     }
     return browserStatus
@@ -199,6 +232,39 @@ const browserApi: DesktopApi = {
     return browserStatus
   },
   async setCaptureEnabled() {},
+  async getPairingIdleTimeout() {
+    return browserPairingIdleTimeout
+  },
+  async setPairingIdleTimeout(minutes) {
+    browserPairingIdleTimeout = minutes
+    return minutes
+  },
+  async listPairedDevices() {
+    return [...browserPairedDevices]
+  },
+  async createPairingChallenge(deviceToken) {
+    return {
+      url: `http://192.168.1.24:28086/__netcat/pair/${deviceToken ?? crypto.randomUUID()}`,
+      expiresAt: new Date(Date.now() + 300_000).toISOString()
+    }
+  },
+  async renamePairedDevice(deviceToken, name) {
+    const device = browserPairedDevices.find((candidate) => candidate.deviceToken === deviceToken)
+    if (!device) throw new Error('未找到已配对设备')
+    device.name = name
+    return { ...device }
+  },
+  async disconnectPairedDevice(deviceToken) {
+    const index = browserPairedDevices.findIndex((candidate) => candidate.deviceToken === deviceToken)
+    if (index >= 0) browserPairedDevices.splice(index, 1)
+  },
+  async deletePairedDeviceData(deviceToken) {
+    await this.disconnectPairedDevice(deviceToken)
+    const before = browserRows.length
+    const remaining = browserRows.filter((row) => row.deviceToken !== deviceToken)
+    browserRows.splice(0, browserRows.length, ...remaining)
+    return before - remaining.length
+  },
   async getCaStatus() {
     return { generated: true, certificatePath: '/Users/demo/NetCat/netcat-ca.crt', fingerprint: '8A:31:4D:CC:12:9B' }
   },
@@ -379,6 +445,13 @@ const tauriApi: DesktopApi = {
   startProxy: (config) => invoke('start_proxy', { config }),
   stopProxy: () => invoke('stop_proxy'),
   setCaptureEnabled: (enabled) => invoke('set_capture_enabled', { enabled }),
+  getPairingIdleTimeout: () => invoke('get_pairing_idle_timeout'),
+  setPairingIdleTimeout: (minutes) => invoke('set_pairing_idle_timeout', { minutes }),
+  listPairedDevices: () => invoke('list_paired_devices'),
+  createPairingChallenge: (deviceToken = null) => invoke('create_pairing_challenge', { deviceToken }),
+  renamePairedDevice: (deviceToken, name) => invoke('rename_paired_device', { deviceToken, name }),
+  disconnectPairedDevice: (deviceToken) => invoke('disconnect_paired_device', { deviceToken }),
+  deletePairedDeviceData: (deviceToken) => invoke('delete_paired_device_data', { deviceToken }),
   getCaStatus: () => invoke('get_ca_status'),
   generateCa: () => invoke('generate_ca'),
   async exportCa() {

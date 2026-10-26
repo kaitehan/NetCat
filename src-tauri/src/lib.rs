@@ -6,6 +6,7 @@ pub mod error;
 pub mod export;
 pub mod migration;
 pub mod models;
+pub mod pairing;
 pub mod platform;
 pub mod proxy;
 pub mod rules;

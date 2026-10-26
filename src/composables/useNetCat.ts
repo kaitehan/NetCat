@@ -8,8 +8,11 @@ import type {
   DiagnosticLog,
   MockRule,
   MockRuleTestResult,
+  PairedDevice,
+  PairingChallenge,
   PlatformInfo,
   ProxyConfig,
+  ProxyMode,
   ProxyStatus,
   ReplayDraft,
   ReplayMode,
@@ -32,6 +35,7 @@ export function useNetCat() {
   const api = inject(desktopApiKey, desktopApi)
   const proxyStatus = shallowRef<ProxyStatus>({
     state: 'stopped',
+    mode: 'computer',
     bindAddress: null,
     port: 28086,
     lanIp: null,
@@ -50,7 +54,10 @@ export function useNetCat() {
   const disclaimerAccepted = shallowRef<boolean | null>(null)
   const error = shallowRef<AppError | null>(null)
   const busy = shallowRef(false)
-  const allowLan = shallowRef(false)
+  const proxyMode = shallowRef<ProxyMode>('computer')
+  const pairedDevices = shallowRef<readonly PairedDevice[]>([])
+  const pairingIdleTimeout = shallowRef(15)
+  const pairingChallenge = shallowRef<PairingChallenge | null>(null)
   const lanIp = shallowRef<string | null>(null)
   const captureEnabled = shallowRef(true)
   const port = shallowRef(28086)
@@ -66,7 +73,7 @@ export function useNetCat() {
   async function initialize() {
     busy.value = true
     try {
-      const [status, localLanIp, rows, rules, certificate, systemProxy, disclaimer, platformInfo, certificateTrust] = await Promise.all([
+      const [status, localLanIp, rows, rules, certificate, systemProxy, disclaimer, platformInfo, certificateTrust, devices, idleTimeout] = await Promise.all([
         api.getProxyStatus(),
         api.getLanIp?.() ?? Promise.resolve(null),
         api.listTraffic(),
@@ -84,9 +91,12 @@ export function useNetCat() {
         api.getCertificateTrustDetails().catch((cause) => {
           error.value = normalizeDesktopError(cause)
           return { publicTrust: 'unavailable', privateKeyState: 'unavailable' } as const
-        })
+        }),
+        api.listPairedDevices(),
+        api.getPairingIdleTimeout()
       ])
       proxyStatus.value = status
+      proxyMode.value = status.mode
       lanIp.value = status.lanIp ?? localLanIp
       port.value = status.port
       traffic.value = rows
@@ -96,6 +106,8 @@ export function useNetCat() {
       platform.value = platformInfo
       trustState.value = certificateTrust.publicTrust
       privateKeyState.value = certificateTrust.privateKeyState
+      pairedDevices.value = devices
+      pairingIdleTimeout.value = idleTimeout
       disclaimerAccepted.value = disclaimer
       unlisteners.push(await api.listen<ProxyStatus>('proxy-status-changed', (payload) => {
         proxyStatus.value = payload
@@ -103,6 +115,10 @@ export function useNetCat() {
       }))
       unlisteners.push(await api.listen<TrafficSummary>('traffic-created', trafficEvents.schedule))
       unlisteners.push(await api.listen<TrafficSummary>('traffic-updated', trafficEvents.schedule))
+      unlisteners.push(await api.listen<PairedDevice[]>('paired-devices-changed', (payload) => {
+        pairedDevices.value = payload
+        pairingChallenge.value = null
+      }))
       unlisteners.push(await api.listen<AppError>('storage-warning', (payload) => {
         error.value = payload
       }))
@@ -126,21 +142,24 @@ export function useNetCat() {
     await runSystemProxyAction(async () => {
       if (isRunning.value) {
         proxyStatus.value = await api.stopProxy()
+        pairedDevices.value = []
+        pairingChallenge.value = null
         return
       }
 
       proxyStatus.value = await api.startProxy({
         port: port.value,
-        allowLan: allowLan.value,
+        mode: proxyMode.value,
         captureEnabled: captureEnabled.value
       })
-      if (systemProxyPreferred.value) {
+      if (proxyMode.value === 'computer' && systemProxyPreferred.value) {
         await api.enableSystemProxy()
       }
     })
   }
 
   async function setSystemProxy(enabled: boolean) {
+    if (proxyMode.value === 'mobile') return
     systemProxyPreferred.value = enabled
     if (!isRunning.value || enabled === systemProxyEnabled.value) {
       return
@@ -173,11 +192,49 @@ export function useNetCat() {
     await runAction(() => api.setCaptureEnabled(enabled))
   }
 
-  async function setAllowLan(enabled: boolean) {
-    allowLan.value = enabled
-    if (enabled) {
+  async function setProxyMode(mode: ProxyMode) {
+    if (isRunning.value) return
+    proxyMode.value = mode
+    if (mode === 'mobile') {
       lanIp.value = await api.getLanIp?.() ?? null
     }
+  }
+
+  async function setPairingIdleTimeout(minutes: number) {
+    if (!Number.isInteger(minutes) || minutes < 5 || minutes > 120) return
+    await runAction(async () => {
+      pairingIdleTimeout.value = await api.setPairingIdleTimeout(minutes)
+    })
+  }
+
+  async function createPairingChallenge(deviceToken: string | null = null) {
+    await runAction(async () => {
+      pairingChallenge.value = await api.createPairingChallenge(deviceToken)
+    })
+  }
+
+  async function renamePairedDevice(deviceToken: string, name: string) {
+    await runAction(async () => {
+      await api.renamePairedDevice(deviceToken, name)
+      pairedDevices.value = await api.listPairedDevices()
+      await reloadTraffic()
+    })
+  }
+
+  async function disconnectPairedDevice(deviceToken: string) {
+    await runAction(async () => {
+      await api.disconnectPairedDevice(deviceToken)
+      pairedDevices.value = await api.listPairedDevices()
+    })
+  }
+
+  async function deletePairedDeviceData(deviceToken: string) {
+    await runAction(async () => {
+      await api.deletePairedDeviceData(deviceToken)
+      pairedDevices.value = await api.listPairedDevices()
+      await reloadTraffic()
+      if (selectedDetail.value?.deviceToken === deviceToken) selectedDetail.value = null
+    })
   }
 
   async function selectTraffic(row: TrafficSummary) {
@@ -425,7 +482,10 @@ export function useNetCat() {
     disclaimerAccepted: readonly(disclaimerAccepted),
     error: readonly(error),
     busy: readonly(busy),
-    allowLan,
+    proxyMode,
+    pairedDevices: readonly(pairedDevices),
+    pairingIdleTimeout: readonly(pairingIdleTimeout),
+    pairingChallenge: readonly(pairingChallenge),
     lanIp: readonly(lanIp),
     captureEnabled: readonly(captureEnabled),
     port,
@@ -435,7 +495,12 @@ export function useNetCat() {
     toggleProxy,
     setSystemProxy,
     restoreSystemProxy,
-    setAllowLan,
+    setProxyMode,
+    setPairingIdleTimeout,
+    createPairingChallenge,
+    renamePairedDevice,
+    disconnectPairedDevice,
+    deletePairedDeviceData,
     setCapture,
     selectTraffic,
     getTrafficDetail,

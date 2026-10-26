@@ -9,7 +9,7 @@ describe('AboutPage', () => {
     expect(screen.getByRole('heading', { name: '关于 NetCat' })).toBeVisible()
     expect(screen.getByText('奈特猫 · 本地守候每一次请求')).toBeVisible()
     expect(screen.getByText(/NetCat（奈特猫）是一款面向开发者/)).toBeVisible()
-    expect(screen.getByText('0.3.0')).toBeVisible()
+    expect(screen.getByText('0.4.0')).toBeVisible()
     expect(screen.getByText('kaite han')).toBeVisible()
   })
 })

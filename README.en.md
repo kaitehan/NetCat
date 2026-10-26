@@ -15,12 +15,12 @@ NetCat is not affiliated with the traditional `netcat` / `nc` command-line netwo
 ## Core Features
 
 - Local HTTP/1.1 and HTTPS CONNECT proxy, listening on `127.0.0.1:28086` by default
-- User-enabled LAN mode that only accepts traffic from private network sources
+- Mutually exclusive computer and mobile capture modes; mobile mode accepts only paired private-network devices and never captures computer traffic
 - Dynamic HTTPS leaf certificates and a local root CA; the private key is stored in macOS Keychain or encrypted with current-user DPAPI on Windows
 - Editable request replay for GET, POST, JSON, form, and binary bodies
 - Exact, substring, and regular-expression URL mocks with method, priority, status code, headers, body, delay, match testing, and hit statistics
 - SQLite persistence with a rolling limit of 5,000 records and a 10 MB truncation limit for each request or response body
-- Filtering by keyword, method, status code, and domain, with Request, Response, and Timing details
+- Local and per-device tabs plus combined keyword, method, status, and domain filters
 - HAR 1.2 export and executable cURL copy
 - HTTP/HTTPS system proxy configuration and recovery for the current network service on macOS and the current user on Windows
 
@@ -111,11 +111,14 @@ Use the CA only in controlled development environments. Do not install it on pro
 ## Mobile Device Setup
 
 1. Connect the computer and mobile device to the same trusted Wi-Fi network. On Windows, allow inbound proxy traffic only for trusted private networks if the firewall prompts you.
-2. Enable LAN mode in NetCat and start the proxy.
+2. Under Settings > Proxy, select Mobile Capture and start the proxy. Mobile mode does not enable the system proxy and does not record computer requests.
 3. Set the mobile device's Wi-Fi HTTP proxy to the computer IP and port shown in NetCat.
-4. Scan the QR code in the certificate settings or visit `http://<computer-IP>:28086/__netcat/ca.crt`.
-5. After installing the profile on iOS, open Settings > General > About > Certificate Trust Settings and enable full trust.
-6. Android 7+ applications may not trust user CAs by default. The application under test must explicitly allow them in its Network Security Config.
+4. Select Generate Pairing QR Code and scan it with the mobile device. The QR code expires after five minutes and can be used only once. A successful device immediately appears in Settings and in a request-page device tab.
+5. Download the CA from the pairing success page, or visit `http://<computer-IP>:28086/__netcat/ca.crt`. After installing the profile on iOS, open Settings > General > About > Certificate Trust Settings and enable full trust.
+6. Android 7+ applications may not trust user CAs by default. The application under test must explicitly allow user certificates in its Network Security Config. Some vendor interfaces place Wi-Fi proxy settings under Modify network > Advanced options.
+7. Devices disconnect after 15 idle minutes by default; the setting accepts 5–120 minutes. Stopping the proxy, manually disconnecting, or timing out clears the current pairing, so the device must scan a new code next time. Captured history remains available.
+
+Use the All, Local, and per-device tabs on the request page to switch traffic sources. A disconnected device remains visible while it has history. Settings provides rename, re-pair, disconnect, and confirmed deletion of all history for that device.
 
 ## Recovery
 

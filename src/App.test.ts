@@ -6,6 +6,7 @@ import type { MockRule, ProxyStatus, TrafficDetail, TrafficSummary } from './sha
 
 const status: ProxyStatus = {
   state: 'stopped',
+  mode: 'computer',
   bindAddress: null,
   port: 28086,
   lanIp: null,
@@ -34,7 +35,14 @@ function platformApi() {
     getCertificateTrustStatus: vi.fn().mockResolvedValue('unsupported'),
     getCertificateTrustDetails: vi.fn().mockResolvedValue({ publicTrust: 'unsupported', privateKeyState: 'unavailable' }),
     installCaTrust: vi.fn(),
-    removeCaTrust: vi.fn()
+    removeCaTrust: vi.fn(),
+    getPairingIdleTimeout: vi.fn().mockResolvedValue(15),
+    setPairingIdleTimeout: vi.fn().mockImplementation(async (minutes: number) => minutes),
+    listPairedDevices: vi.fn().mockResolvedValue([]),
+    createPairingChallenge: vi.fn(),
+    renamePairedDevice: vi.fn(),
+    disconnectPairedDevice: vi.fn(),
+    deletePairedDeviceData: vi.fn()
   }
 }
 
@@ -50,6 +58,7 @@ function windowsApi(): DesktopApi {
     installCaTrust: vi.fn().mockResolvedValue('trusted'),
     removeCaTrust: vi.fn().mockResolvedValue('notTrusted'),
     listTraffic: vi.fn().mockResolvedValue([]),
+    listPairedDevices: vi.fn().mockResolvedValue([]),
     listMockRules: vi.fn().mockResolvedValue([]),
     hasAcceptedDisclaimer: vi.fn().mockResolvedValue(true),
     listen: vi.fn().mockResolvedValue(() => undefined)
@@ -286,7 +295,7 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: '启动代理' }))
     await waitFor(() => expect(startProxy).toHaveBeenCalledWith({
       port: 28086,
-      allowLan: false,
+      mode: 'computer',
       captureEnabled: true
     }))
     await waitFor(() => expect(enableSystemProxy).toHaveBeenCalledOnce())
@@ -332,7 +341,7 @@ describe('App', () => {
 
     await fireEvent.click(screen.getByRole('button', { name: '设置' }))
     expect(await screen.findByRole('heading', { name: '设置' })).toBeVisible()
-    expect(screen.queryByRole('button', { name: '启动代理' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '启动代理' })).toBeVisible()
     expect(container.querySelector('.app-shell')).toHaveClass('settings-active')
     expect(screen.getByRole('tab', { name: '代理配置' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('spinbutton', { name: '代理端口' })).toHaveValue(28086)
@@ -341,6 +350,31 @@ describe('App', () => {
 
     await fireEvent.click(screen.getByRole('tab', { name: '证书配置' }))
     expect(screen.getByText('本地 CA 已就绪')).toBeVisible()
+  })
+
+  it('confirms the device request count before deleting historical device data', async () => {
+    const api = windowsApi()
+    const deviceRow = {
+      ...row,
+      origin: 'mobile' as const,
+      deviceToken: 'history-token',
+      deviceName: '历史手机'
+    }
+    vi.mocked(api.getProxyStatus).mockResolvedValue({ ...status, mode: 'mobile' })
+    vi.mocked(api.listTraffic).mockResolvedValueOnce([deviceRow]).mockResolvedValue([])
+    api.deletePairedDeviceData = vi.fn().mockResolvedValue(1)
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValueOnce(false).mockReturnValueOnce(true)
+    renderWithApi(api)
+
+    await fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    const deleteButton = await screen.findByRole('button', { name: '删除设备数据' })
+    await fireEvent.click(deleteButton)
+    expect(confirm).toHaveBeenCalledWith('确认断开该设备并删除其 1 条请求吗？此操作无法撤销。')
+    expect(api.deletePairedDeviceData).not.toHaveBeenCalled()
+
+    await fireEvent.click(deleteButton)
+    await waitFor(() => expect(api.deletePairedDeviceData).toHaveBeenCalledWith('history-token'))
+    confirm.mockRestore()
   })
 
   it('opens About as a standalone app view without the business toolbar', async () => {

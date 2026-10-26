@@ -6,8 +6,8 @@ use std::{
 use netcat_lib::{
     ca::{CaManager, SecretStore},
     models::{
-        DiagnosticLog, MatchKind, MockRule, ProxyConfig, ProxyState, ReplayMode, ReplayRequest,
-        TrafficDraft, TrafficSummary,
+        DiagnosticLog, MatchKind, MockRule, ProxyConfig, ProxyMode, ProxyState, ReplayMode,
+        ReplayRequest, TrafficDraft, TrafficOrigin, TrafficSummary,
     },
     proxy::{ProxyEventSink, ProxyService},
     storage::Store,
@@ -65,6 +65,9 @@ fn replay_source(url: String) -> TrafficDraft {
         response_body: Vec::new(),
         content_type: None,
         mocked: false,
+        origin: TrafficOrigin::Computer,
+        device_token: None,
+        device_name: None,
         source_exchange_id: None,
         matched_mock_rule_id: None,
         error: None,
@@ -301,7 +304,7 @@ async fn proxy_serves_mock_and_persists_exchange() {
         .start(
             ProxyConfig {
                 port: 0,
-                allow_lan: false,
+                mode: ProxyMode::Computer,
                 capture_enabled: true,
             },
             ca.load_issuer().unwrap(),
@@ -389,7 +392,7 @@ async fn proxy_forwards_a_real_http_upstream_response() {
         .start(
             ProxyConfig {
                 port: 0,
-                allow_lan: false,
+                mode: ProxyMode::Computer,
                 capture_enabled: true,
             },
             ca.load_issuer().unwrap(),
@@ -452,7 +455,7 @@ async fn https_mock_uses_a_leaf_certificate_trusted_by_the_generated_ca() {
         .start(
             ProxyConfig {
                 port: 0,
-                allow_lan: false,
+                mode: ProxyMode::Computer,
                 capture_enabled: true,
             },
             ca.load_issuer().unwrap(),

@@ -1,4 +1,6 @@
 export type ProxyState = 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
+export type ProxyMode = 'computer' | 'mobile'
+export type TrafficOrigin = 'computer' | 'mobile' | 'replay'
 
 export interface PlatformInfo {
   os: 'windows' | 'macos'
@@ -30,12 +32,13 @@ export interface CertificateTrustDetails {
 
 export interface ProxyConfig {
   port: number
-  allowLan: boolean
+  mode: ProxyMode
   captureEnabled: boolean
 }
 
 export interface ProxyStatus {
   state: ProxyState
+  mode: ProxyMode
   bindAddress: string | null
   port: number
   lanIp: string | null
@@ -54,6 +57,9 @@ export interface TrafficSummary {
   contentType: string | null
   mocked: boolean
   truncated: boolean
+  origin?: TrafficOrigin
+  deviceToken?: string | null
+  deviceName?: string | null
   sourceExchangeId?: string | null
   matchedMockRuleId?: string | null
   error: string | null
@@ -188,4 +194,23 @@ export interface TrafficFilter {
   method: string
   status: string
   host: string
+}
+
+export interface PairedDevice {
+  deviceToken: string
+  name: string
+  boundIp: string
+  createdAt: string
+  lastSeenAt: string
+}
+
+export interface PairingChallenge {
+  url: string
+  expiresAt: string
+}
+
+export interface HistoricalDevice {
+  deviceToken: string
+  name: string
+  requestCount: number
 }

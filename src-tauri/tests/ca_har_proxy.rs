@@ -7,7 +7,7 @@ use http_body_util::BodyExt;
 use netcat_lib::{
     ca::{CaManager, SecretStore, CA_COMMON_NAME, CA_ORGANIZATION_NAME, KEYCHAIN_SERVICE},
     export::build_har,
-    models::{MatchKind, MockRule, TrafficDetail, TrafficSummary},
+    models::{MatchKind, MockRule, TrafficDetail, TrafficOrigin, TrafficSummary},
     proxy::{build_mock_response, CA_DOWNLOAD_PATH},
 };
 
@@ -39,6 +39,9 @@ fn detail() -> TrafficDetail {
             content_type: Some("application/json".into()),
             mocked: true,
             truncated: false,
+            origin: TrafficOrigin::Computer,
+            device_token: None,
+            device_name: None,
             source_exchange_id: None,
             matched_mock_rule_id: None,
             error: None,
@@ -88,6 +91,9 @@ fn har_uses_version_1_2_and_preserves_mock_marker() {
     );
     assert_eq!(har["log"]["creator"]["name"], "NetCat");
     assert_eq!(har["log"]["entries"][0]["_netcat_mocked"], true);
+    assert_eq!(har["log"]["entries"][0]["_netcat_origin"], "computer");
+    assert!(har["log"]["entries"][0]["_netcat_device_token"].is_null());
+    assert!(har["log"]["entries"][0]["_netcat_device_name"].is_null());
     assert!(har["log"]["entries"][0].get("_netcapture_mocked").is_none());
 }
 

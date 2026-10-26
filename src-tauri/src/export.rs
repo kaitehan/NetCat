@@ -254,7 +254,10 @@ fn har_entry(detail: &TrafficDetail) -> Value {
         },
         "_netcat_mocked": detail.summary.mocked,
         "_netcat_truncated": detail.summary.truncated,
-        "_netcat_error": detail.summary.error
+        "_netcat_error": detail.summary.error,
+        "_netcat_origin": detail.summary.origin,
+        "_netcat_device_token": detail.summary.device_token,
+        "_netcat_device_name": detail.summary.device_name
     })
 }
 

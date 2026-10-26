@@ -11,9 +11,11 @@ use crate::{
     migration::migrate_legacy_macos_database,
     models::{
         CaStatus, DiagnosticLevel, DiagnosticLog, DiagnosticScope, MockRule, MockRuleMatch,
-        MockRuleTestResult, ProxyConfig, ProxyStatus, ReplayDraft, ReplayMode, ReplayRequest,
-        ReplayResult, TrafficCopyKind, TrafficDetail, TrafficFilter, TrafficSummary,
+        MockRuleTestResult, PairedDevice, PairingChallenge, ProxyConfig, ProxyMode, ProxyStatus,
+        ReplayDraft, ReplayMode, ReplayRequest, ReplayResult, TrafficCopyKind, TrafficDetail,
+        TrafficFilter, TrafficSummary,
     },
+    pairing::{PairingEventSink, PairingService},
     platform::{CertificateTrustDetails, CertificateTrustState, PlatformServices},
     proxy::{ProxyEventSink, ProxyService},
     rules::RuntimeMockRules,
@@ -26,6 +28,7 @@ const DISCLAIMER_KEY: &str = "disclaimer_accepted";
 struct AppState {
     store: Arc<Store>,
     proxy: Arc<ProxyService>,
+    pairing: Arc<PairingService>,
     ca: CaManager,
     platform: PlatformServices,
 }
@@ -157,6 +160,12 @@ impl ProxyEventSink for TauriEventSink {
     }
 }
 
+impl PairingEventSink for TauriEventSink {
+    fn devices_changed(&self, devices: &[PairedDevice]) {
+        let _ = self.0.emit("paired-devices-changed", devices);
+    }
+}
+
 fn emit_diagnostic(app: &tauri::AppHandle, log: DiagnosticLog) {
     let _ = app.emit("diagnostic-log", log);
 }
@@ -215,6 +224,66 @@ fn get_proxy_status(state: State<'_, AppState>) -> ProxyStatus {
 #[tauri::command]
 fn get_lan_ip() -> Option<String> {
     crate::proxy::local_lan_ip()
+}
+
+#[tauri::command]
+fn get_pairing_idle_timeout(state: State<'_, AppState>) -> u16 {
+    state.pairing.idle_timeout_minutes()
+}
+
+#[tauri::command]
+fn set_pairing_idle_timeout(state: State<'_, AppState>, minutes: u16) -> Result<u16, AppError> {
+    state.pairing.set_idle_timeout_minutes(minutes)
+}
+
+#[tauri::command]
+fn list_paired_devices(state: State<'_, AppState>) -> Result<Vec<PairedDevice>, AppError> {
+    state.pairing.list_devices()
+}
+
+#[tauri::command]
+fn create_pairing_challenge(
+    state: State<'_, AppState>,
+    device_token: Option<String>,
+) -> Result<PairingChallenge, AppError> {
+    let status = state.proxy.status();
+    if status.state != crate::models::ProxyState::Running || status.mode != ProxyMode::Mobile {
+        return Err(AppError::new(
+            "MOBILE_PROXY_NOT_RUNNING",
+            "请先以手机抓包模式启动代理",
+        ));
+    }
+    let lan_ip = status
+        .lan_ip
+        .ok_or_else(|| AppError::new("LAN_ADDRESS_UNAVAILABLE", "未找到可用的局域网地址"))?;
+    state
+        .pairing
+        .create_challenge(&lan_ip, status.port, device_token)
+}
+
+#[tauri::command]
+fn rename_paired_device(
+    state: State<'_, AppState>,
+    device_token: String,
+    name: String,
+) -> Result<PairedDevice, AppError> {
+    state.pairing.rename_device(&device_token, &name)
+}
+
+#[tauri::command]
+fn disconnect_paired_device(
+    state: State<'_, AppState>,
+    device_token: String,
+) -> Result<(), AppError> {
+    state.pairing.disconnect_device(&device_token)
+}
+
+#[tauri::command]
+fn delete_paired_device_data(
+    state: State<'_, AppState>,
+    device_token: String,
+) -> Result<usize, AppError> {
+    state.pairing.delete_device_data(&device_token)
 }
 
 #[tauri::command]
@@ -610,11 +679,16 @@ pub fn run() {
             if let Err(error) = platform.system_proxy.restore() {
                 let _ = app.emit("storage-warning", &error);
             }
+            store
+                .clear_paired_devices()
+                .map_err(|error| error.to_string())?;
             let event_sink = Arc::new(TauriEventSink(app.handle().clone()));
-            let proxy = Arc::new(ProxyService::with_event_sink(
+            let pairing = Arc::new(PairingService::new(Arc::clone(&store), event_sink.clone()));
+            let proxy = Arc::new(ProxyService::with_pairing_service(
                 Arc::clone(&store),
                 event_sink,
                 platform.ports.clone(),
+                Arc::clone(&pairing),
             ));
             let ca = CaManager::new(
                 data_directory.join("certificates"),
@@ -624,6 +698,7 @@ pub fn run() {
             app.manage(AppState {
                 store,
                 proxy,
+                pairing,
                 ca,
                 platform,
             });
@@ -635,6 +710,13 @@ pub fn run() {
             get_proxy_status,
             get_lan_ip,
             set_capture_enabled,
+            get_pairing_idle_timeout,
+            set_pairing_idle_timeout,
+            list_paired_devices,
+            create_pairing_challenge,
+            rename_paired_device,
+            disconnect_paired_device,
+            delete_paired_device_data,
             generate_ca,
             get_ca_status,
             get_platform_info,
@@ -765,9 +847,19 @@ mod tests {
             ),
             ports: Arc::new(crate::platform::NativePortInspector),
         };
+        let pairing = Arc::new(PairingService::new(
+            store.clone(),
+            Arc::new(crate::pairing::NoopPairingEventSink),
+        ));
         AppState {
             ca: CaManager::new(directory.to_path_buf(), platform.secrets.clone()),
-            proxy: Arc::new(ProxyService::new(store.clone(), platform.ports.clone())),
+            proxy: Arc::new(ProxyService::with_pairing_service(
+                store.clone(),
+                Arc::new(crate::proxy::NoopEventSink),
+                platform.ports.clone(),
+                pairing.clone(),
+            )),
+            pairing,
             store,
             platform,
         }
