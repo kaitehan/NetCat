@@ -41,6 +41,13 @@ use crate::{
 pub const CA_DOWNLOAD_PATH: &str = "/__netcat/ca.crt";
 pub const HEALTH_PATH: &str = "/__netcat/health";
 
+pub fn local_lan_ip() -> Option<String> {
+    local_ip_address::local_ip()
+        .ok()
+        .filter(|ip| is_private_client(*ip) && !ip.is_loopback())
+        .map(|ip| ip.to_string())
+}
+
 pub trait ProxyEventSink: Send + Sync + 'static {
     fn status_changed(&self, _status: &ProxyStatus) {}
     fn traffic_created(&self, _exchange: &TrafficSummary) {}
@@ -479,10 +486,7 @@ impl ProxyService {
             })?;
         *self.shutdown.lock().await = Some(shutdown_tx);
         *self.task.lock().await = Some(tokio::spawn(proxy.start()));
-        let lan_ip = config
-            .allow_lan
-            .then(|| local_ip_address::local_ip().ok().map(|ip| ip.to_string()))
-            .flatten();
+        let lan_ip = config.allow_lan.then(local_lan_ip).flatten();
         let status = ProxyStatus {
             state: ProxyState::Running,
             bind_address: Some(address.ip().to_string()),

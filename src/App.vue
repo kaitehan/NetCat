@@ -131,10 +131,6 @@ const contextDisabledReasons = computed<Partial<Record<TrafficMenuAction, string
   return reasons
 })
 
-function setAllowLan(value: boolean) {
-  capture.allowLan.value = value
-}
-
 function setPort(value: number) {
   capture.port.value = value
 }
@@ -401,15 +397,17 @@ onMounted(() => void capture.initialize())
           :proxy-status="capture.proxyStatus.value"
           :port="capture.port.value"
           :allow-lan="capture.allowLan.value"
+          :lan-ip="capture.lanIp.value"
           :capture-enabled="capture.captureEnabled.value"
           :system-proxy-preferred="capture.systemProxyPreferred.value"
           :system-proxy-enabled="capture.systemProxyEnabled.value"
           :ca-status="capture.caStatus.value"
           :busy="capture.busy.value"
           @update-port="setPort"
-          @update-allow-lan="setAllowLan"
+          @update-allow-lan="capture.setAllowLan"
           @update-capture="capture.setCapture"
           @update-system-proxy="capture.setSystemProxy"
+          @toggle-proxy="capture.toggleProxy"
           @restore-system-proxy="capture.restoreSystemProxy"
           @generate-ca="capture.generateCa"
           @export-ca="exportCa"

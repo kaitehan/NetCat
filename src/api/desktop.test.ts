@@ -35,12 +35,15 @@ describe('desktopApi native platform commands', () => {
     ['getCertificateTrustStatus', 'get_certificate_trust_status', 'notTrusted'],
     ['getCertificateTrustDetails', 'get_certificate_trust_details', { publicTrust: 'trusted', privateKeyState: 'missing' }],
     ['installCaTrust', 'install_ca_trust', 'trusted'],
-    ['removeCaTrust', 'remove_ca_trust', 'notTrusted']
+    ['removeCaTrust', 'remove_ca_trust', 'notTrusted'],
+    ['getLanIp', 'get_lan_ip', '192.168.1.24']
   ] as const)('maps %s to its native command and preserves the result', async (method, command, response) => {
     window.__TAURI_INTERNALS__ = {} as Window['__TAURI_INTERNALS__']
     vi.mocked(invoke).mockResolvedValue(response)
     const { desktopApi: nativeApi } = await import('./desktop')
-    expect(await nativeApi[method]()).toEqual(response)
+    const commandMethod = nativeApi[method]
+    expect(commandMethod).toBeDefined()
+    expect(await commandMethod!()).toEqual(response)
     expect(invoke).toHaveBeenCalledWith(command)
   })
 })

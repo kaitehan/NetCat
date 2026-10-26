@@ -1,18 +1,15 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { CheckCircle2, Download, KeyRound, Smartphone, X } from '@lucide/vue'
-import QrcodeVue from 'qrcode.vue'
-import type { CaStatus, CaPrivateKeyState, CertificateTrustState, PlatformInfo, ProxyStatus } from '../../shared/types'
+import { CheckCircle2, Download, KeyRound, X } from '@lucide/vue'
+import type { CaStatus, CaPrivateKeyState, CertificateTrustState, PlatformInfo } from '../../shared/types'
 
-const { open = true, embedded = false, platform, trustState, privateKeyState, caStatus, proxyStatus, allowLan, busy } = defineProps<{
+const { open = true, embedded = false, platform, trustState, privateKeyState, caStatus, busy } = defineProps<{
   open?: boolean
   embedded?: boolean
   platform: PlatformInfo | null
   trustState: CertificateTrustState
   privateKeyState: CaPrivateKeyState
   caStatus: CaStatus
-  proxyStatus: ProxyStatus
-  allowLan: boolean
   busy: boolean
 }>()
 
@@ -56,13 +53,6 @@ const trustMessage = computed(() => {
   return messages[trustState]
 })
 
-const certificateUrl = computed(() => {
-  if (!allowLan || proxyStatus.state !== 'running' || !proxyStatus.lanIp) {
-    return null
-  }
-  return `http://${proxyStatus.lanIp}:${proxyStatus.port}/__netcat/ca.crt`
-})
-const healthUrl = computed(() => certificateUrl.value?.replace('/__netcat/ca.crt', '/__netcat/health') ?? null)
 </script>
 
 <template>
@@ -153,29 +143,6 @@ const healthUrl = computed(() => certificateUrl.value?.replace('/__netcat/ca.crt
           <p role="status">平台信息加载中或暂不可用</p>
         </section>
 
-        <section class="instruction-section">
-          <div class="section-title">
-            <Smartphone :size="16" />
-            <h3>iOS / Android</h3>
-          </div>
-          <template v-if="certificateUrl">
-            <p>手机与电脑保持同一 Wi-Fi，代理填写 {{ proxyStatus.lanIp }}:{{ proxyStatus.port }}，然后访问：</p>
-            <div class="certificate-download">
-              <div class="qr-code" aria-label="CA 证书下载二维码">
-                <QrcodeVue :value="certificateUrl" :size="116" level="M" render-as="svg" />
-              </div>
-              <code>{{ certificateUrl }}</code>
-            </div>
-            <p>代理连通性自检：<code class="inline-code">{{ healthUrl }}</code></p>
-          </template>
-          <p v-else>启动代理并开启“局域网”，这里会显示手机证书下载地址。</p>
-          <ol>
-            <li>CA 地址无法下载：先访问连通性自检地址，确认代理和局域网配置。</li>
-            <li>CA 已下载但 HTTPS 仍失败：iOS 需在“证书信任设置”中开启完全信任。</li>
-            <li>TLS 握手失败：Android 7+ 应用可能不信任用户 CA，需由被测应用显式允许。</li>
-            <li>浏览器正常但特定应用失败：该应用可能启用了证书固定，本工具不会绕过该保护。</li>
-          </ol>
-        </section>
       </div>
     </section>
   </div>
@@ -281,16 +248,6 @@ const healthUrl = computed(() => certificateUrl.value?.replace('/__netcat/ca.crt
   font-size: 12px;
 }
 
-.section-title {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-}
-
-.section-title h3 {
-  margin: 0;
-}
-
 .instruction-section p,
 .instruction-section li {
   color: var(--text-secondary);
@@ -301,46 +258,6 @@ const healthUrl = computed(() => certificateUrl.value?.replace('/__netcat/ca.crt
 .instruction-section ol {
   margin: 10px 0 0;
   padding-left: 18px;
-}
-
-.instruction-section code {
-  display: block;
-  min-width: 0;
-  padding: 9px 10px;
-  overflow-wrap: anywhere;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--surface-raised);
-  color: var(--accent-strong);
-  font-size: 10px;
-}
-
-.instruction-section .inline-code {
-  display: inline;
-  padding: 2px 4px;
-}
-
-.certificate-download {
-  display: grid;
-  grid-template-columns: 132px minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-}
-
-.qr-code {
-  display: grid;
-  width: 132px;
-  height: 132px;
-  place-items: center;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--qr-surface);
-}
-
-@media (max-width: 480px) {
-  .certificate-download {
-    grid-template-columns: 1fr;
-  }
 }
 
 .icon-button,

@@ -51,6 +51,7 @@ export function useNetCat() {
   const error = shallowRef<AppError | null>(null)
   const busy = shallowRef(false)
   const allowLan = shallowRef(false)
+  const lanIp = shallowRef<string | null>(null)
   const captureEnabled = shallowRef(true)
   const port = shallowRef(28086)
   const diagnosticLogs = shallowRef<readonly DiagnosticLog[]>([])
@@ -65,8 +66,9 @@ export function useNetCat() {
   async function initialize() {
     busy.value = true
     try {
-      const [status, rows, rules, certificate, systemProxy, disclaimer, platformInfo, certificateTrust] = await Promise.all([
+      const [status, localLanIp, rows, rules, certificate, systemProxy, disclaimer, platformInfo, certificateTrust] = await Promise.all([
         api.getProxyStatus(),
+        api.getLanIp?.() ?? Promise.resolve(null),
         api.listTraffic(),
         api.listMockRules(),
         api.getCaStatus().catch((cause) => {
@@ -85,6 +87,7 @@ export function useNetCat() {
         })
       ])
       proxyStatus.value = status
+      lanIp.value = status.lanIp ?? localLanIp
       port.value = status.port
       traffic.value = rows
       mockRules.value = rules
@@ -96,6 +99,7 @@ export function useNetCat() {
       disclaimerAccepted.value = disclaimer
       unlisteners.push(await api.listen<ProxyStatus>('proxy-status-changed', (payload) => {
         proxyStatus.value = payload
+        lanIp.value = payload.lanIp ?? lanIp.value
       }))
       unlisteners.push(await api.listen<TrafficSummary>('traffic-created', trafficEvents.schedule))
       unlisteners.push(await api.listen<TrafficSummary>('traffic-updated', trafficEvents.schedule))
@@ -167,6 +171,13 @@ export function useNetCat() {
   async function setCapture(enabled: boolean) {
     captureEnabled.value = enabled
     await runAction(() => api.setCaptureEnabled(enabled))
+  }
+
+  async function setAllowLan(enabled: boolean) {
+    allowLan.value = enabled
+    if (enabled) {
+      lanIp.value = await api.getLanIp?.() ?? null
+    }
   }
 
   async function selectTraffic(row: TrafficSummary) {
@@ -415,6 +426,7 @@ export function useNetCat() {
     error: readonly(error),
     busy: readonly(busy),
     allowLan,
+    lanIp: readonly(lanIp),
     captureEnabled: readonly(captureEnabled),
     port,
     diagnosticLogs: readonly(diagnosticLogs),
@@ -423,6 +435,7 @@ export function useNetCat() {
     toggleProxy,
     setSystemProxy,
     restoreSystemProxy,
+    setAllowLan,
     setCapture,
     selectTraffic,
     getTrafficDetail,

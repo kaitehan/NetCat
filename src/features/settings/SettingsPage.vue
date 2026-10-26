@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { Bug, Download, Info, Laptop, Pause, Radio, Router, Settings2, ShieldCheck } from '@lucide/vue'
+import { Bug, Download, Info, Laptop, Pause, Router, Settings2, ShieldCheck } from '@lucide/vue'
 import { computed, shallowRef } from 'vue'
 import { APP_BRAND } from '../../shared/brand'
 import type { CaStatus, CaPrivateKeyState, CertificateTrustState, PlatformInfo, ProxyStatus, SystemProxyStatus } from '../../shared/types'
 import CertificatePanel from '../certificate/CertificatePanel.vue'
+import MobileConnectionPanel from './MobileConnectionPanel.vue'
 
 const {
   platform,
@@ -13,6 +14,7 @@ const {
   proxyStatus,
   port,
   allowLan,
+  lanIp = null,
   captureEnabled,
   systemProxyPreferred,
   systemProxyEnabled,
@@ -26,6 +28,7 @@ const {
   proxyStatus: ProxyStatus
   port: number
   allowLan: boolean
+  lanIp?: string | null
   captureEnabled: boolean
   systemProxyPreferred: boolean
   systemProxyEnabled: boolean
@@ -38,6 +41,7 @@ const emit = defineEmits<{
   updateAllowLan: [value: boolean]
   updateCapture: [value: boolean]
   updateSystemProxy: [value: boolean]
+  toggleProxy: []
   restoreSystemProxy: []
   generateCa: []
   exportCa: []
@@ -56,13 +60,6 @@ const systemProxyChecked = computed(() => {
   }
   return proxyStatus.state === 'running' ? systemProxyEnabled && systemProxyStatus.managed : systemProxyPreferred
 })
-
-function updatePort(event: Event) {
-  const value = Number((event.target as HTMLInputElement).value)
-  if (Number.isInteger(value) && value >= 1 && value <= 65535) {
-    emit('updatePort', value)
-  }
-}
 
 function updateSystemProxy(event: Event) {
   const input = event.target as HTMLInputElement
@@ -115,47 +112,18 @@ function updateSystemProxy(event: Event) {
     </header>
 
     <div v-if="activeTab === 'proxy'" class="settings-content" role="tabpanel">
-      <section class="settings-section">
-        <div class="section-heading">
-          <Radio :size="17" />
-          <div>
-            <h2>监听配置</h2>
-            <p>端口和接入范围需要在代理停止时修改。</p>
-          </div>
-        </div>
-
-        <div class="setting-row">
-          <div>
-            <label for="proxy-port">代理端口</label>
-            <p>本机和移动设备连接 {{ APP_BRAND.name }} 使用的端口。</p>
-          </div>
-          <input
-            id="proxy-port"
-            :value="port"
-            type="number"
-            min="1"
-            max="65535"
-            :disabled="proxyStatus.state === 'running'"
-            @change="updatePort"
-          />
-        </div>
-        <div class="setting-row">
-          <div>
-            <label for="allow-lan">局域网接入</label>
-            <p>允许同一私有网络中的手机和平板连接代理。</p>
-          </div>
-          <label class="switch-control">
-            <input
-              id="allow-lan"
-              type="checkbox"
-              :checked="allowLan"
-              :disabled="proxyStatus.state === 'running'"
-              @change="emit('updateAllowLan', ($event.target as HTMLInputElement).checked)"
-            />
-            <span aria-hidden="true" />
-          </label>
-        </div>
-      </section>
+      <MobileConnectionPanel
+        :proxy-status="proxyStatus"
+        :port="port"
+        :allow-lan="allowLan"
+        :lan-ip="lanIp"
+        :ca-status="caStatus"
+        :busy="busy"
+        @update-port="emit('updatePort', $event)"
+        @update-allow-lan="emit('updateAllowLan', $event)"
+        @toggle-proxy="emit('toggleProxy')"
+        @generate-ca="emit('generateCa')"
+      />
 
       <section class="settings-section">
         <div class="section-heading">
@@ -229,8 +197,6 @@ function updateSystemProxy(event: Event) {
         :trust-state="trustState"
         :private-key-state="privateKeyState"
         :ca-status="caStatus"
-        :proxy-status="proxyStatus"
-        :allow-lan="allowLan"
         :busy="busy"
         @generate="emit('generateCa')"
         @export="emit('exportCa')"
@@ -377,6 +343,10 @@ function updateSystemProxy(event: Event) {
 }
 
 .settings-section + .settings-section {
+  margin-top: 22px;
+}
+
+.mobile-panel + .settings-section {
   margin-top: 22px;
 }
 

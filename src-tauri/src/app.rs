@@ -213,6 +213,11 @@ fn get_proxy_status(state: State<'_, AppState>) -> ProxyStatus {
 }
 
 #[tauri::command]
+fn get_lan_ip() -> Option<String> {
+    crate::proxy::local_lan_ip()
+}
+
+#[tauri::command]
 fn set_capture_enabled(state: State<'_, AppState>, enabled: bool) {
     state.proxy.set_capture_enabled(enabled);
 }
@@ -628,6 +633,7 @@ pub fn run() {
             start_proxy,
             stop_proxy,
             get_proxy_status,
+            get_lan_ip,
             set_capture_enabled,
             generate_ca,
             get_ca_status,

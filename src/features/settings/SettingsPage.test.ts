@@ -16,6 +16,7 @@ const props = {
   },
   port: 28086,
   allowLan: false,
+  lanIp: '192.168.1.24',
   captureEnabled: true,
   systemProxyPreferred: true,
   systemProxyEnabled: false,
@@ -28,6 +29,23 @@ const props = {
 }
 
 describe('SettingsPage', () => {
+  it('keeps LAN setup, proxy startup and the certificate QR code in one mobile connection flow', async () => {
+    const { emitted, rerender } = render(SettingsPage, { props })
+
+    expect(screen.getByRole('heading', { name: '手机连接' })).toBeVisible()
+    await fireEvent.click(screen.getByRole('checkbox', { name: '允许手机连接此代理' }))
+    expect(emitted().updateAllowLan).toEqual([[true]])
+
+    await rerender({ ...props, allowLan: true })
+    expect(screen.getByText('192.168.1.24:28086')).toBeVisible()
+    expect(screen.getByLabelText('CA 证书下载二维码')).toBeVisible()
+    await fireEvent.click(screen.getByRole('button', { name: '启动代理' }))
+    expect(emitted().toggleProxy).toHaveLength(1)
+
+    await fireEvent.click(screen.getByRole('tab', { name: '证书配置' }))
+    expect(screen.queryByRole('heading', { name: 'iOS / Android' })).not.toBeInTheDocument()
+  })
+
   it('shows proxy conflicts and requests recovery without reporting the proxy as enabled', async () => {
     const { emitted } = render(SettingsPage, { props: {
       ...props,

@@ -39,6 +39,7 @@ export interface DesktopApi {
   installCaTrust(): Promise<CertificateTrustState>
   removeCaTrust(): Promise<CertificateTrustState>
   getProxyStatus(): Promise<ProxyStatus>
+  getLanIp?(): Promise<string | null>
   startProxy(config: ProxyConfig): Promise<ProxyStatus>
   stopProxy(): Promise<ProxyStatus>
   setCaptureEnabled(enabled: boolean): Promise<void>
@@ -179,6 +180,9 @@ const browserApi: DesktopApi = {
   },
   async getProxyStatus() {
     return browserStatus
+  },
+  async getLanIp() {
+    return '192.168.1.24'
   },
   async startProxy(config) {
     browserStatus = {
@@ -371,6 +375,7 @@ const tauriApi: DesktopApi = {
   installCaTrust: () => invoke('install_ca_trust'),
   removeCaTrust: () => invoke('remove_ca_trust'),
   getProxyStatus: () => invoke('get_proxy_status'),
+  getLanIp: () => invoke('get_lan_ip'),
   startProxy: (config) => invoke('start_proxy', { config }),
   stopProxy: () => invoke('stop_proxy'),
   setCaptureEnabled: (enabled) => invoke('set_capture_enabled', { enabled }),
