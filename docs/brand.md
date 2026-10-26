@@ -26,4 +26,4 @@ NetCat（奈特猫）是一款面向开发者的本地 HTTP/HTTPS 抓包与 Mock
 Design a production-ready macOS app icon for “NetCat”, a local HTTP/HTTPS traffic capture and mocking tool. Create a minimal, front-facing cat face whose outline is formed by three connected network nodes and clean routing lines. Use subtle whiskers to suggest bidirectional request and response traffic. Use a light cool-blue background (#e7efff), vivid blue as the primary accent (#2f6fff), deep charcoal details (#1f2937), and a small amount of cyan as a semantic accent. Keep the composition centered with a strong silhouette, simple vector-like geometry, generous safe margins, and excellent legibility at 16 px. Compose it for a polished macOS rounded-square app icon at 1024×1024. Do not include text, letters, cartoon characters, photorealism, complex textures, decorative gradients, or baked-in drop shadows.
 ```
 
-当前版本继续使用现有图标资源；该 Prompt 用于后续独立的图标重绘任务。
+当前版本使用橘猫与双向网络箭头构成的应用图标，主源图位于 `src-tauri/app-icon.png`。该 Prompt 保留为后续品牌图标重绘参考。
