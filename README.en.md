@@ -40,7 +40,7 @@ The current release does not parse HTTP/2, QUIC, WebSocket frames, or non-HTTP T
 
 | Platform | Status | Notes |
 | --- | --- | --- |
-| macOS 12+ | Primary support | System proxy integration, Keychain-backed private keys, and `.app` / DMG packaging are implemented |
+| macOS 12+ | Primary support | Current-user CA trust, system proxy integration, Keychain-backed private keys, and `.app` / DMG packaging are implemented |
 | Windows 10 22H2 / Windows 11 | Experimental support | x86_64 MSVC only; current-user proxy integration, DPAPI private keys, certificate trust, and NSIS build configuration are implemented, but native Windows acceptance testing is still required |
 
 The project is currently an internal development build. It is not recommended for production environments or uncontrolled networks.
@@ -97,9 +97,10 @@ cargo test --manifest-path src-tauri/Cargo.toml --test proxy_stress sustains_200
 
 1. Read and accept the authorized-use notice.
 2. Open Certificate and select Generate Certificate. The public certificate is written to the application data directory. The private key is stored in macOS Keychain or encrypted with current-user DPAPI in `ca-private-key.dpapi` on Windows. Copying that file to another account is not sufficient to use it.
-3. On macOS, export the public CA and double-click it to add it to Keychain Access. Find `NetCat Local Root CA` in the System keychain, expand Trust, and set When using this certificate to Always Trust. On Windows, install and trust the CA from the certificate panel. NetCat writes only to the current user's Trusted Root Certification Authorities store. You may also export the CA, select Current User and that store in the Certificate Import Wizard, and verify the fingerprint.
-4. Start the proxy. Enable System Proxy only when applications that follow the operating system proxy should connect automatically. On Windows, NetCat changes only the current user's manual HTTP/HTTPS proxy in Internet Settings. It preserves the bypass list, PAC, and automatic detection settings. It does not configure WinHTTP; applications with independent proxy or certificate stores require separate configuration.
-5. Stop the proxy when testing is complete. NetCat attempts to restore the saved HTTP and HTTPS proxy configuration. If another program or user changed the proxy, NetCat preserves its recovery record and asks for manual resolution instead of overwriting the newer configuration.
+3. On macOS, select Install Trust in the certificate panel. After authorization, NetCat writes only the current CA to the current user's login Keychain. On Windows, select Install Trust to write only to the current user's Trusted Root Certification Authorities store. On either platform, you may export the public CA for manual recovery and should verify its SHA-256 fingerprint.
+4. Computer mode starts only when the current CA is trusted. Otherwise NetCat refuses to start and leaves the system proxy unchanged. Install trust before enabling the proxy to avoid `NET::ERR_CERT_AUTHORITY_INVALID` in browsers.
+5. Start the proxy. Enable System Proxy only when applications that follow the operating system proxy should connect automatically. On Windows, NetCat changes only the current user's manual HTTP/HTTPS proxy in Internet Settings. It preserves the bypass list, PAC, and automatic detection settings. It does not configure WinHTTP; applications with independent proxy or certificate stores require separate configuration.
+6. Stop the proxy when testing is complete. NetCat attempts to restore the saved HTTP and HTTPS proxy configuration. If another program or user changed the proxy, NetCat preserves its recovery record and asks for manual resolution instead of overwriting the newer configuration.
 
 Use the CA only in controlled development environments. Do not install it on production devices or distribute it to unrelated users.
 
@@ -108,7 +109,7 @@ Use the CA only in controlled development environments. Do not install it on pro
 - Stop the proxy and fully quit the previous NetCapture application before upgrading so both versions cannot modify the system proxy at the same time.
 - On first launch, when the NetCat database does not already exist, NetCat copies traffic, mock rules, and settings from `~/Library/Application Support/com.netcapture.desktop/netcapture.sqlite3` into the new database.
 - The old directory, database, and Keychain records are preserved for rollback. Existing NetCat data is never overwritten.
-- NetCat generates a new `NetCat Local Root CA`. Import and trust it again. After confirming HTTPS capture works, you may manually delete the old `NetCapture Local Root CA` from Keychain Access.
+- NetCat generates a new `NetCat Local Root CA`. Install trust again from the certificate panel. After confirming HTTPS capture works, you may manually delete the old `NetCapture Local Root CA` from Keychain Access.
 - The certificate download endpoint is now `/__netcat/ca.crt`, and HAR extension fields now use `_netcat_*`. Legacy names are not supported.
 
 ## Mobile Device Setup

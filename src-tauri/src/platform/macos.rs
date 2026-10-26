@@ -1,9 +1,13 @@
-use std::{process::Command, sync::Arc};
+use std::{io::Write, path::PathBuf, process::Command, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
-use super::{PortProcess, SecretStore, SystemProxyBackend};
+use super::{
+    certificate_der, CertificateTrust, CertificateTrustState, PortProcess, SecretStore,
+    SystemProxyBackend,
+};
 use crate::{
     ca::KEYCHAIN_SERVICE,
     error::AppError,
@@ -28,8 +32,236 @@ pub fn platform_info() -> crate::models::PlatformInfo {
         os: "macos".into(),
         version,
         arch: std::env::consts::ARCH.into(),
-        certificate_trust_supported: false,
+        certificate_trust_supported: true,
     }
+}
+
+#[derive(Debug)]
+struct SecurityCommandOutput {
+    success: bool,
+    stdout: String,
+    stderr: String,
+}
+
+impl SecurityCommandOutput {
+    #[cfg(test)]
+    fn success(stdout: String) -> Self {
+        Self {
+            success: true,
+            stdout,
+            stderr: String::new(),
+        }
+    }
+}
+
+type SecurityCommand = dyn Fn(&[&str]) -> Result<SecurityCommandOutput, AppError> + Send + Sync;
+
+pub struct MacOsCertificateTrust {
+    login_keychain: PathBuf,
+    command: Arc<SecurityCommand>,
+}
+
+enum CertificateInput {
+    Ready(String),
+    State(CertificateTrustState),
+}
+
+impl MacOsCertificateTrust {
+    pub fn new() -> Result<Self, AppError> {
+        let home = std::env::var_os("HOME").ok_or_else(certificate_store_error)?;
+        Ok(Self {
+            login_keychain: PathBuf::from(home).join("Library/Keychains/login.keychain-db"),
+            command: Arc::new(run_security),
+        })
+    }
+
+    #[cfg(test)]
+    fn with_command(login_keychain: PathBuf, command: Arc<SecurityCommand>) -> Self {
+        Self {
+            login_keychain,
+            command,
+        }
+    }
+
+    fn login_keychain(&self) -> String {
+        self.login_keychain.to_string_lossy().into_owned()
+    }
+
+    fn contains_fingerprint(&self, fingerprint: &str) -> Result<bool, AppError> {
+        let keychain = self.login_keychain();
+        let output = (self.command)(&["find-certificate", "-a", "-Z", &keychain])?;
+        if !output.success {
+            return Err(certificate_store_error().with_detail(output.stderr));
+        }
+        Ok(output.stdout.lines().any(|line| {
+            line.trim()
+                .strip_prefix("SHA-256 hash:")
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case(fingerprint))
+        }))
+    }
+
+    fn verify_trust(&self, certificate_pem: &[u8]) -> Result<bool, AppError> {
+        let mut certificate = tempfile::Builder::new()
+            .prefix("netcat-ca-")
+            .suffix(".crt")
+            .tempfile()
+            .map_err(|error| certificate_store_error().with_detail(error.to_string()))?;
+        certificate
+            .write_all(certificate_pem)
+            .map_err(|error| certificate_store_error().with_detail(error.to_string()))?;
+        certificate
+            .flush()
+            .map_err(|error| certificate_store_error().with_detail(error.to_string()))?;
+        let path = certificate.path().to_string_lossy().into_owned();
+        let keychain = self.login_keychain();
+        let output = (self.command)(&[
+            "verify-cert",
+            "-c",
+            &path,
+            "-p",
+            "basic",
+            "-l",
+            "-L",
+            "-q",
+            "-k",
+            &keychain,
+        ])?;
+        Ok(output.success)
+    }
+
+    fn mutate(&self, arguments: &[&str], message: &'static str) -> Result<(), AppError> {
+        let output = (self.command)(arguments)?;
+        if output.success {
+            Ok(())
+        } else {
+            Err(certificate_store_error()
+                .with_detail(output.stderr)
+                .with_action(message))
+        }
+    }
+}
+
+fn validate_certificate(
+    certificate_pem: &[u8],
+    fingerprint: &str,
+) -> Result<CertificateInput, AppError> {
+    if certificate_pem.is_empty() {
+        return Ok(CertificateInput::State(CertificateTrustState::NotGenerated));
+    }
+    let der = certificate_der(certificate_pem)?;
+    let compact = fingerprint.replace(':', "");
+    if compact.len() != 64 || !compact.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(AppError::new(
+            "CA_FINGERPRINT_INVALID",
+            "需要完整的 SHA-256 证书指纹",
+        ));
+    }
+    let actual = Sha256::digest(&der)
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<String>();
+    if !compact.eq_ignore_ascii_case(&actual) {
+        return Ok(CertificateInput::State(CertificateTrustState::Mismatch));
+    }
+    Ok(CertificateInput::Ready(compact.to_ascii_uppercase()))
+}
+
+impl CertificateTrust for MacOsCertificateTrust {
+    fn status(
+        &self,
+        certificate_pem: &[u8],
+        fingerprint: &str,
+    ) -> Result<CertificateTrustState, AppError> {
+        let fingerprint = match validate_certificate(certificate_pem, fingerprint)? {
+            CertificateInput::Ready(fingerprint) => fingerprint,
+            CertificateInput::State(state) => return Ok(state),
+        };
+        if !self.contains_fingerprint(&fingerprint)? {
+            return Ok(CertificateTrustState::NotTrusted);
+        }
+        Ok(if self.verify_trust(certificate_pem)? {
+            CertificateTrustState::Trusted
+        } else {
+            CertificateTrustState::NotTrusted
+        })
+    }
+
+    fn install(
+        &self,
+        certificate_pem: &[u8],
+        fingerprint: &str,
+    ) -> Result<CertificateTrustState, AppError> {
+        let fingerprint = match validate_certificate(certificate_pem, fingerprint)? {
+            CertificateInput::Ready(fingerprint) => fingerprint,
+            CertificateInput::State(state) => return Ok(state),
+        };
+        if self.contains_fingerprint(&fingerprint)? && self.verify_trust(certificate_pem)? {
+            return Ok(CertificateTrustState::Trusted);
+        }
+        let mut certificate = tempfile::Builder::new()
+            .prefix("netcat-ca-")
+            .suffix(".crt")
+            .tempfile()
+            .map_err(|error| certificate_store_error().with_detail(error.to_string()))?;
+        certificate
+            .write_all(certificate_pem)
+            .and_then(|_| certificate.flush())
+            .map_err(|error| certificate_store_error().with_detail(error.to_string()))?;
+        let path = certificate.path().to_string_lossy().into_owned();
+        let keychain = self.login_keychain();
+        self.mutate(
+            &[
+                "add-trusted-cert",
+                "-r",
+                "trustRoot",
+                "-k",
+                &keychain,
+                &path,
+            ],
+            "请允许 NetCat 修改当前用户登录钥匙串后重试",
+        )?;
+        self.status(certificate_pem, fingerprint.as_str())
+    }
+
+    fn remove(
+        &self,
+        certificate_pem: &[u8],
+        fingerprint: &str,
+    ) -> Result<CertificateTrustState, AppError> {
+        let fingerprint = match validate_certificate(certificate_pem, fingerprint)? {
+            CertificateInput::Ready(fingerprint) => fingerprint,
+            CertificateInput::State(state) => return Ok(state),
+        };
+        if !self.contains_fingerprint(&fingerprint)? {
+            return Ok(CertificateTrustState::NotTrusted);
+        }
+        let keychain = self.login_keychain();
+        self.mutate(
+            &["delete-certificate", "-Z", &fingerprint, &keychain],
+            "请允许 NetCat 修改当前用户登录钥匙串后重试",
+        )?;
+        self.status(certificate_pem, fingerprint.as_str())
+    }
+}
+
+fn run_security(arguments: &[&str]) -> Result<SecurityCommandOutput, AppError> {
+    let output = Command::new("/usr/bin/security")
+        .args(arguments)
+        .output()
+        .map_err(|error| certificate_store_error().with_detail(error.to_string()))?;
+    Ok(SecurityCommandOutput {
+        success: output.status.success(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+fn certificate_store_error() -> AppError {
+    AppError::new(
+        "CERTIFICATE_STORE_ERROR",
+        "无法访问当前用户的 macOS 登录钥匙串",
+    )
+    .with_action("请确认登录钥匙串可用后重试")
 }
 
 pub fn port_listener(port: u16) -> Option<PortProcess> {
@@ -287,9 +519,95 @@ fn run(program: &str, arguments: &[&str]) -> Result<String, AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::platform::{CertificateTrust, CertificateTrustState};
     use crate::system_proxy::SystemProxyManager;
     use serde_json::json;
     use std::sync::Mutex;
+
+    const PEM_A: &[u8] = b"-----BEGIN CERTIFICATE-----\nQQ==\n-----END CERTIFICATE-----\n";
+    const HASH_A: &str = "559AEAD08264D5795D3909718CDD05ABD49572E84FE55590EEF31A88A08FDFFD";
+
+    #[test]
+    fn certificate_trust_is_explicit_and_removes_only_the_exact_fingerprint() {
+        let calls = Arc::new(Mutex::new(Vec::<Vec<String>>::new()));
+        let trusted = Arc::new(Mutex::new(false));
+        let command_calls = calls.clone();
+        let command_trusted = trusted.clone();
+        let trust = MacOsCertificateTrust::with_command(
+            "/Users/test/Library/Keychains/login.keychain-db".into(),
+            Arc::new(move |arguments| {
+                command_calls
+                    .lock()
+                    .unwrap()
+                    .push(arguments.iter().map(|value| (*value).to_owned()).collect());
+                match arguments[0] {
+                    "find-certificate" => Ok(SecurityCommandOutput::success(
+                        if *command_trusted.lock().unwrap() {
+                            format!("SHA-256 hash: {HASH_A}\n")
+                        } else {
+                            String::new()
+                        },
+                    )),
+                    "verify-cert" => Ok(SecurityCommandOutput {
+                        success: *command_trusted.lock().unwrap(),
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    }),
+                    "add-trusted-cert" => {
+                        *command_trusted.lock().unwrap() = true;
+                        Ok(SecurityCommandOutput::success(String::new()))
+                    }
+                    "delete-certificate" => {
+                        assert_eq!(arguments[1..3], ["-Z", HASH_A]);
+                        *command_trusted.lock().unwrap() = false;
+                        Ok(SecurityCommandOutput::success(String::new()))
+                    }
+                    operation => panic!("unexpected security operation: {operation}"),
+                }
+            }),
+        );
+
+        assert_eq!(
+            trust.status(PEM_A, HASH_A).unwrap(),
+            CertificateTrustState::NotTrusted
+        );
+        assert_eq!(
+            trust.install(PEM_A, HASH_A).unwrap(),
+            CertificateTrustState::Trusted
+        );
+        assert_eq!(
+            trust.remove(PEM_A, HASH_A).unwrap(),
+            CertificateTrustState::NotTrusted
+        );
+
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls[0][0], "find-certificate");
+        assert!(calls
+            .iter()
+            .any(|call| call.first().map(String::as_str) == Some("add-trusted-cert")));
+        assert!(calls
+            .iter()
+            .any(|call| call.first().map(String::as_str) == Some("delete-certificate")));
+    }
+
+    #[test]
+    fn certificate_trust_status_never_mutates_the_keychain() {
+        let calls = Arc::new(Mutex::new(Vec::<String>::new()));
+        let command_calls = calls.clone();
+        let trust = MacOsCertificateTrust::with_command(
+            "/Users/test/Library/Keychains/login.keychain-db".into(),
+            Arc::new(move |arguments| {
+                command_calls.lock().unwrap().push(arguments[0].to_owned());
+                Ok(SecurityCommandOutput::success(String::new()))
+            }),
+        );
+
+        assert_eq!(
+            trust.status(PEM_A, HASH_A).unwrap(),
+            CertificateTrustState::NotTrusted
+        );
+        assert_eq!(*calls.lock().unwrap(), ["find-certificate"]);
+    }
 
     struct FakeNetworkSetup {
         states: Mutex<[SystemProxyState; 2]>,

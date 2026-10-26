@@ -14,7 +14,7 @@ use hudsucker::{
     certificate_authority::RcgenAuthority,
     hyper::{
         header::{HeaderName, HeaderValue, CONTENT_LENGTH, CONTENT_TYPE, HOST, TRANSFER_ENCODING},
-        Request, Response, StatusCode,
+        Method, Request, Response, StatusCode,
     },
     rcgen::{Issuer, KeyPair},
     rustls::crypto::aws_lc_rs,
@@ -827,6 +827,9 @@ impl HttpHandler for CaptureHandler {
         } else {
             None
         };
+        if request.method() == Method::CONNECT {
+            return request.into();
+        }
         if request.uri().path() == HEALTH_PATH {
             let body = r#"{"status":"ok","service":"netcat"}"#;
             let mut response = Response::new(Body::from(body));

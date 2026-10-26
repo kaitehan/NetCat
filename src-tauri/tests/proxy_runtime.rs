@@ -596,5 +596,10 @@ async fn https_mock_uses_a_leaf_certificate_trusted_by_the_generated_ca() {
         .unwrap();
     assert_eq!(response.status(), 200);
     assert_eq!(response.text().await.unwrap(), "{\"tls\":true}");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let rows = store.list_traffic(Default::default(), None, 20).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].method, "GET");
+    assert_eq!(rows[0].status, Some(200));
     service.stop().await.unwrap();
 }

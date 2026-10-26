@@ -42,7 +42,7 @@ NetCat 与传统的 `netcat` / `nc` 命令行网络工具没有关联。本项�
 
 | 平台 | 状态 | 说明 |
 | --- | --- | --- |
-| macOS 12+ | 主要支持 | 已实现系统代理、钥匙串私钥以及 `.app` / DMG 打包 |
+| macOS 12+ | 主要支持 | 已实现当前用户 CA 信任、系统代理、钥匙串私钥以及 `.app` / DMG 打包 |
 | Windows 10 22H2 / Windows 11 | 实验性支持 | 仅支持 x86_64 MSVC；已实现当前用户代理、DPAPI 私钥、证书信任与 NSIS 构建配置，仍需完成 Windows 实机验收 |
 
 项目当前处于内部开发阶段，不建议直接用于生产环境或未受控网络。
@@ -97,9 +97,10 @@ cargo test --manifest-path src-tauri/Cargo.toml --test proxy_stress sustains_200
 
 1. 阅读并确认授权使用声明。
 2. 打开“证书”，点击“生成证书”。公开证书写入应用数据目录；macOS 私钥写入钥匙串，Windows 私钥使用当前用户 DPAPI 加密保存到 `ca-private-key.dpapi`，不能仅复制该文件到其他账号使用。
-3. macOS：导出公开 CA，双击加入“钥匙串访问”。在“系统”钥匙串中找到 `NetCat Local Root CA`，展开“信任”，将“使用此证书时”设为“始终信任”。Windows：在证书面板安装并信任 CA，授权后仅写入当前用户的“受信任的根证书颁发机构”；也可导出 CA，在证书导入向导选择“当前用户”及该存储区，并核对指纹。
-4. 启动代理。需要让遵循系统代理的应用自动接入时，再开启“系统代理”。Windows 只修改当前用户 Internet Settings 的手动 HTTP/HTTPS 代理，保留绕过列表、PAC 和自动检测设置；不会配置 WinHTTP，使用独立代理或证书存储的应用需单独设置。
-5. 完成测试后停止代理。应用会尝试恢复修改前保存的 HTTP 与 HTTPS 代理配置；如检测到代理设置已被其他程序或用户更改，会保留恢复记录并提示手动处理。
+3. macOS：在证书面板点击“安装信任”，授权后仅将当前 CA 写入当前用户的“登录”钥匙串；Windows：在证书面板点击“安装信任”，授权后仅写入当前用户的“受信任的根证书颁发机构”。两端都可导出公开 CA 供手工恢复，并应核对 SHA-256 指纹。
+4. 电脑模式只会在当前 CA 已受信任时启动；否则 NetCat 会拒绝启动且不会修改系统代理。完成信任后再打开代理，避免浏览器出现 `NET::ERR_CERT_AUTHORITY_INVALID`。
+5. 启动代理。需要让遵循系统代理的应用自动接入时，再开启“系统代理”。Windows 只修改当前用户 Internet Settings 的手动 HTTP/HTTPS 代理，保留绕过列表、PAC 和自动检测设置；不会配置 WinHTTP，使用独立代理或证书存储的应用需单独设置。
+6. 完成测试后停止代理。应用会尝试恢复修改前保存的 HTTP 与 HTTPS 代理配置；如检测到代理设置已被其他程序或用户更改，会保留恢复记录并提示手动处理。
 
 证书只应用于受控开发环境。不要导入生产设备，也不要分发给无关人员。
 
@@ -108,7 +109,7 @@ cargo test --manifest-path src-tauri/Cargo.toml --test proxy_stress sustains_200
 - 升级前请停止代理并完全退出旧版 NetCapture，避免两个版本同时修改系统代理。
 - 首次使用 NetCat 启动时，如果新数据库尚不存在，应用会将旧目录 `~/Library/Application Support/com.netcapture.desktop/netcapture.sqlite3` 中的流量、Mock 规则和设置复制到新数据库。
 - 旧目录、旧数据库和旧钥匙串记录不会被删除，便于回滚；已有 NetCat 数据不会被覆盖。
-- 升级后会生成新的 `NetCat Local Root CA`。请重新导入并信任新证书，确认 HTTPS 抓包正常后，可从“钥匙串访问”手动删除旧的 `NetCapture Local Root CA`。
+- 升级后会生成新的 `NetCat Local Root CA`。请在证书面板重新安装信任，确认 HTTPS 抓包正常后，可从“钥匙串访问”手动删除旧的 `NetCapture Local Root CA`。
 - 证书下载地址已切换为 `/__netcat/ca.crt`，HAR 扩展字段已切换为 `_netcat_*`，不再兼容旧名称。
 
 ## 手机接入

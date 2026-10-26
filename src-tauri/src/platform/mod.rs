@@ -55,22 +55,6 @@ impl PortInspector for NativePortInspector {
     }
 }
 
-#[cfg(target_os = "macos")]
-struct UnsupportedCertificateTrust;
-
-#[cfg(target_os = "macos")]
-impl CertificateTrust for UnsupportedCertificateTrust {
-    fn status(&self, _: &[u8], _: &str) -> Result<CertificateTrustState, AppError> {
-        Ok(CertificateTrustState::Unsupported)
-    }
-    fn install(&self, _: &[u8], _: &str) -> Result<CertificateTrustState, AppError> {
-        Ok(CertificateTrustState::Unsupported)
-    }
-    fn remove(&self, _: &[u8], _: &str) -> Result<CertificateTrustState, AppError> {
-        Ok(CertificateTrustState::Unsupported)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum CertificateTrustState {
@@ -213,7 +197,7 @@ impl PlatformServices {
                 secrets: Arc::new(macos::KeychainSecretStore),
                 system_proxy: SystemProxyManager::new(store, backend),
                 info: macos::platform_info(),
-                certificate_trust: Arc::new(UnsupportedCertificateTrust),
+                certificate_trust: Arc::new(macos::MacOsCertificateTrust::new()?),
                 ports: Arc::new(NativePortInspector),
             })
         }

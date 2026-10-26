@@ -274,6 +274,37 @@ fn database_quick_check_reports_a_healthy_store() {
 }
 
 #[test]
+fn reopening_store_removes_incomplete_connect_placeholders_only() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("traffic.sqlite3");
+    {
+        let store = Store::open(&path, 10, 1024).unwrap();
+        let mut connect = draft(1, Vec::new());
+        connect.method = "CONNECT".into();
+        connect.url = "example.test:443".into();
+        connect.status = None;
+        connect.duration_ms = None;
+        store.insert_exchange(connect).unwrap();
+
+        let mut failed = draft(2, Vec::new());
+        failed.status = None;
+        failed.error = Some("connection reset".into());
+        store.insert_exchange(failed).unwrap();
+    }
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("DELETE FROM schema_migrations WHERE version = 5", [])
+        .unwrap();
+
+    let store = Store::open(&path, 10, 1024).unwrap();
+    let rows = store.list_traffic(Default::default(), None, 20).unwrap();
+
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, "traffic-2");
+    assert_eq!(rows[0].error.as_deref(), Some("connection reset"));
+}
+
+#[test]
 fn port_diagnostics_extract_process_and_pid_from_lsof() {
     let output = "COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME\nnode 4312 dev 21u IPv4 0x0 0t0 TCP *:28086 (LISTEN)\n";
     assert_eq!(

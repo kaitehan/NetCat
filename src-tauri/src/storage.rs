@@ -121,6 +121,16 @@ impl Store {
         ensure_column(&connection, "exchanges", "applied_script_ids", "TEXT")?;
         ensure_column(&connection, "exchanges", "network_profile_id", "TEXT")?;
         ensure_column(&connection, "exchanges", "stage_timings", "TEXT")?;
+        connection.execute_batch(
+            "DELETE FROM exchanges
+               WHERE method = 'CONNECT'
+                 AND status IS NULL
+                 AND error IS NULL
+                 AND NOT EXISTS (
+                   SELECT 1 FROM schema_migrations WHERE version = 5
+                 );
+             INSERT OR IGNORE INTO schema_migrations(version) VALUES (5);",
+        )?;
         connection.execute(
             "CREATE INDEX IF NOT EXISTS exchanges_device_token_idx ON exchanges(device_token)",
             [],

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { CheckCircle2, Download, KeyRound, X } from '@lucide/vue'
+import { CheckCircle2, Download, KeyRound, ShieldAlert, ShieldCheck, X } from '@lucide/vue'
 import type { CaStatus, CaPrivateKeyState, CertificateTrustState, PlatformInfo } from '../../shared/types'
 
 const { open = true, embedded = false, platform, trustState, privateKeyState, caStatus, busy } = defineProps<{
@@ -21,8 +21,8 @@ const emit = defineEmits<{
   removeTrust: []
 }>()
 
-const trustSupported = computed(() => platform?.os === 'windows' && platform.certificateTrustSupported && trustState !== 'unsupported')
-const canRegenerate = computed(() => platform?.os === 'windows' && caStatus.generated &&
+const trustSupported = computed(() => platform?.certificateTrustSupported && trustState !== 'unsupported')
+const canRegenerate = computed(() => trustSupported.value && caStatus.generated &&
   trustState !== 'trusted' && (privateKeyState === 'missing' || privateKeyState === 'mismatch'))
 const privateKeyMessage = computed(() => {
   if (trustState === 'trusted' && (privateKeyState === 'missing' || privateKeyState === 'mismatch')) {
@@ -95,51 +95,74 @@ const trustMessage = computed(() => {
           </button>
         </section>
 
-        <section v-if="platform?.os === 'macos'" class="instruction-section">
-          <h3>本机 macOS</h3>
-          <ol>
-            <li>导出证书并双击加入“钥匙串访问”。</li>
-            <li>在“系统”钥匙串中找到 NetCat Local Root CA。</li>
-            <li>展开“信任”，将“使用此证书时”设为“始终信任”。</li>
-            <li>从 NetCat 升级时，请重新信任此证书，并可手动删除旧根证书。</li>
-          </ol>
+        <section v-if="platform?.os === 'macos' || platform?.os === 'windows'" class="trust-section">
+          <div class="trust-heading">
+            <div class="trust-heading-icon" aria-hidden="true">
+              <ShieldCheck :size="18" />
+            </div>
+            <div>
+              <h3>{{ platform.os === 'macos' ? '本机 macOS' : '本机 Windows' }}</h3>
+              <p v-if="trustSupported && platform.os === 'macos'">管理当前用户登录钥匙串中的 CA 信任</p>
+              <p v-else-if="trustSupported">管理当前用户的受信任根证书</p>
+              <p v-else>当前平台需要手动管理 CA 信任</p>
+            </div>
+          </div>
+
+          <div class="trust-row">
+            <div class="trust-summary" role="status">
+              <CheckCircle2 v-if="trustState === 'trusted'" class="trust-state-icon trusted" :size="18" />
+              <ShieldAlert v-else class="trust-state-icon" :size="18" />
+              <div>
+                <strong>{{ trustMessage }}</strong>
+                <p v-if="caStatus.generated" class="private-key-state">
+                  <KeyRound :size="13" aria-hidden="true" />
+                  {{ privateKeyMessage }}
+                </p>
+              </div>
+            </div>
+
+            <div class="trust-actions">
+              <button
+                v-if="trustSupported && caStatus.generated && trustState === 'notTrusted' && privateKeyState === 'ready'"
+                type="button"
+                class="primary-button"
+                :disabled="busy"
+                @click="emit('trust')"
+              >
+                安装信任
+              </button>
+              <button
+                v-if="trustSupported && caStatus.generated && trustState === 'trusted'"
+                type="button"
+                class="secondary-button"
+                :disabled="busy"
+                @click="emit('removeTrust')"
+              >
+                移除信任
+              </button>
+              <button
+                v-if="canRegenerate"
+                type="button"
+                class="primary-button"
+                :disabled="busy"
+                @click="emit('generate')"
+              >
+                重新生成证书
+              </button>
+            </div>
+          </div>
+
+          <details v-if="platform.os === 'macos'" class="manual-instructions">
+            <summary>手动处理</summary>
+            <ol>
+              <li>导出证书并双击加入“钥匙串访问”。</li>
+              <li>在“登录”钥匙串中找到 NetCat Local Root CA。</li>
+              <li>展开“信任”，将“使用此证书时”设为“始终信任”。</li>
+            </ol>
+          </details>
         </section>
 
-        <section v-else-if="platform?.os === 'windows'" class="instruction-section">
-          <h3>本机 Windows</h3>
-          <p v-if="trustSupported">仅在当前用户的“受信任的根证书颁发机构”中安装或移除当前 CA。</p>
-          <p role="status">{{ trustMessage }}</p>
-          <p v-if="caStatus.generated" role="status">{{ privateKeyMessage }}</p>
-          <button
-            v-if="trustSupported && caStatus.generated && trustState === 'notTrusted' && privateKeyState === 'ready'"
-            type="button"
-            class="primary-button"
-            :disabled="busy"
-            @click="emit('trust')"
-          >
-            安装信任
-          </button>
-          <button
-            v-if="trustSupported && caStatus.generated && trustState === 'trusted'"
-            type="button"
-            class="secondary-button"
-            :disabled="busy"
-            @click="emit('removeTrust')"
-          >
-            移除信任
-          </button>
-          <button
-            v-if="canRegenerate"
-            type="button"
-            class="primary-button"
-            :disabled="busy"
-            @click="emit('generate')"
-          >
-            重新生成证书
-          </button>
-        </section>
-
-        <section v-else class="instruction-section">
+        <section v-else class="trust-section unavailable">
           <p role="status">平台信息加载中或暂不可用</p>
         </section>
 
@@ -238,26 +261,110 @@ const trustMessage = computed(() => {
   font-size: var(--font-size-2xs);
 }
 
-.instruction-section {
-  padding: 18px 0;
+.trust-section {
+  padding: 18px 0 0;
   border-bottom: 1px solid var(--border-soft);
 }
 
-.instruction-section h3 {
-  margin: 0 0 10px;
+.trust-section.unavailable {
+  padding-bottom: 18px;
+}
+
+.trust-heading {
+  display: flex;
+  padding: 0 2px 14px;
+  align-items: center;
+  gap: 10px;
+}
+
+.trust-heading-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--radius-control);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.trust-heading h3 {
+  margin: 0;
+  font-size: var(--font-size-lg);
+}
+
+.trust-heading p {
+  margin: 3px 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.trust-row {
+  display: grid;
+  min-height: 68px;
+  padding: 14px 2px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  border-top: 1px solid var(--border-soft);
+}
+
+.trust-summary {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.trust-state-icon {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--warning);
+}
+
+.trust-state-icon.trusted {
+  color: var(--success);
+}
+
+.trust-summary strong {
+  display: block;
+  color: var(--text);
   font-size: var(--font-size-md);
+  line-height: 1.4;
 }
 
-.instruction-section p,
-.instruction-section li {
+.private-key-state {
+  display: flex;
+  margin: 5px 0 0;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+  line-height: 1.45;
+}
+
+.trust-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.manual-instructions {
+  padding: 12px 2px 14px;
+  border-top: 1px solid var(--border-soft);
   color: var(--text-secondary);
-  font-size: var(--font-size-sm);
-  line-height: 1.65;
+  font-size: var(--font-size-xs);
 }
 
-.instruction-section ol {
+.manual-instructions summary {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.manual-instructions ol {
   margin: 10px 0 0;
-  padding-left: 18px;
+  padding-left: 20px;
+  line-height: 1.65;
 }
 
 .icon-button,
@@ -296,5 +403,17 @@ const trustMessage = computed(() => {
   border: 1px solid var(--border-strong);
   background: var(--surface-raised);
   color: var(--text-secondary);
+}
+
+@media (max-width: 560px) {
+  .certificate-status,
+  .trust-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .certificate-status > button,
+  .trust-actions {
+    justify-self: start;
+  }
 }
 </style>

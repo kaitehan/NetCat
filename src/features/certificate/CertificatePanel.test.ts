@@ -83,13 +83,19 @@ describe('CertificatePanel', () => {
     expect(screen.getByRole('button', { name: '导出' })).toBeDisabled()
   })
 
-  it('preserves macOS export and Keychain instructions without native trust buttons', async () => {
-    const { emitted } = render(CertificatePanel, { props: { ...windowsProps, platform: { ...platform, os: 'macos', certificateTrustSupported: false }, trustState: 'unsupported' } })
+  it('offers explicit current-user trust management on macOS', async () => {
+    const macProps = { ...windowsProps, platform: { ...platform, os: 'macos' as const, certificateTrustSupported: true } }
+    const { emitted, rerender } = render(CertificatePanel, { props: macProps })
     expect(screen.getByText('本机 macOS')).toBeVisible()
-    expect(screen.getByText(/导出证书并双击加入“钥匙串访问”/)).toBeVisible()
+    expect(screen.getByText(/当前用户登录钥匙串/)).toBeVisible()
+    await fireEvent.click(screen.getByRole('button', { name: '安装信任' }))
+    expect(emitted().trust).toHaveLength(1)
+
+    await rerender({ ...macProps, trustState: 'trusted' })
+    await fireEvent.click(screen.getByRole('button', { name: '移除信任' }))
+    expect(emitted().removeTrust).toHaveLength(1)
     await fireEvent.click(screen.getByRole('button', { name: '导出' }))
     expect(emitted().export).toHaveLength(1)
-    expect(screen.queryByRole('button', { name: '安装信任' })).not.toBeInTheDocument()
   })
 
 })

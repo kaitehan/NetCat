@@ -204,11 +204,30 @@ async fn start_proxy(
         return Err(AppError::new("CA_NOT_GENERATED", "请先生成本地 CA 证书")
             .with_action("打开证书面板并点击“生成证书”"));
     }
+    if config.mode == ProxyMode::Computer {
+        ensure_computer_proxy_ca_trusted(
+            config.mode,
+            state.certificate_trust_details()?.summary(),
+        )?;
+    }
     let issuer = state.ca.load_issuer()?;
     let certificate = std::fs::read(state.ca.certificate_path()).map_err(|error| {
         AppError::new("FILE_ERROR", "无法读取 CA 证书").with_detail(error.to_string())
     })?;
     state.proxy.start(config, issuer, certificate).await
+}
+
+fn ensure_computer_proxy_ca_trusted(
+    mode: ProxyMode,
+    trust: CertificateTrustState,
+) -> Result<(), AppError> {
+    if mode == ProxyMode::Computer && trust != CertificateTrustState::Trusted {
+        return Err(
+            AppError::new("CA_TRUST_REQUIRED", "启动电脑代理前需要信任当前 CA")
+                .with_action("打开“设置 > 证书配置”，点击“安装信任”后重试"),
+        );
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -1029,6 +1048,30 @@ mod tests {
         ca::{CaManager, SecretStore},
         error::AppError,
     };
+
+    #[test]
+    fn computer_proxy_requires_a_trusted_ca_but_mobile_proxy_does_not() {
+        let error = ensure_computer_proxy_ca_trusted(
+            ProxyMode::Computer,
+            CertificateTrustState::NotTrusted,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "CA_TRUST_REQUIRED");
+        assert_eq!(
+            error.action.as_deref(),
+            Some("打开“设置 > 证书配置”，点击“安装信任”后重试")
+        );
+        assert!(ensure_computer_proxy_ca_trusted(
+            ProxyMode::Computer,
+            CertificateTrustState::Trusted,
+        )
+        .is_ok());
+        assert!(ensure_computer_proxy_ca_trusted(
+            ProxyMode::Mobile,
+            CertificateTrustState::NotTrusted,
+        )
+        .is_ok());
+    }
 
     #[derive(Clone, Default)]
     struct MemorySecrets(Arc<Mutex<Option<String>>>);
