@@ -1,6 +1,6 @@
 [package]
 name = "netcat"
-version = "0.4.0"
+version = "0.5.0"
 description = "Local HTTP/HTTPS capture and mock proxy"
 authors = ["kaite han"]
 edition = "2021"
@@ -30,6 +30,7 @@ hudsucker = "0.24.1"
 keyring = { version = "3.6.3", features = ["apple-native"] }
 local-ip-address = "0.6"
 regex = "1.11"
+rquickjs = "0.11"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 rusqlite = { version = "0.40.2", features = ["backup", "bundled"] }
 rustls-pemfile = "2"

@@ -257,7 +257,10 @@ fn har_entry(detail: &TrafficDetail) -> Value {
         "_netcat_error": detail.summary.error,
         "_netcat_origin": detail.summary.origin,
         "_netcat_device_token": detail.summary.device_token,
-        "_netcat_device_name": detail.summary.device_name
+        "_netcat_device_name": detail.summary.device_name,
+        "_netcat_appliedScriptIds": detail.summary.applied_script_ids,
+        "_netcat_networkProfileId": detail.summary.network_profile_id,
+        "_netcat_stageTimings": detail.summary.stage_timings,
     })
 }
 

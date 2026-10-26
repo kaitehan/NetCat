@@ -3,6 +3,23 @@ import { describe, expect, it } from 'vitest'
 import TopToolbar from './TopToolbar.vue'
 import type { ProxyStatus } from '../shared/types'
 
+const networkProfiles = [{
+  id: 'fast-4g',
+  name: '高速 4G',
+  kind: 'preset' as const,
+  latencyMs: 20,
+  jitterMs: 0,
+  downloadKbps: 9000,
+  uploadKbps: 1500,
+  timeoutPercent: 0,
+  disconnectPercent: 0,
+  methods: [],
+  matchKind: 'contains' as const,
+  urlPattern: '',
+  builtin: true,
+  createdAt: ''
+}]
+
 const stoppedStatus: ProxyStatus = {
   state: 'stopped',
   mode: 'computer',
@@ -17,7 +34,9 @@ describe('TopToolbar', () => {
     render(TopToolbar, {
       props: {
         status: stoppedStatus,
-        busy: false
+        busy: false,
+        networkProfiles,
+        activeNetworkProfileId: null
       }
     })
 
@@ -32,5 +51,6 @@ describe('TopToolbar', () => {
     expect(screen.queryByRole('checkbox', { name: '记录' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '系统代理' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '证书' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '限流配置：无限流' })).toBeVisible()
   })
 })

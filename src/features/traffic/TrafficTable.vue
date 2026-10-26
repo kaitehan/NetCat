@@ -226,7 +226,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
   background: var(--surface-raised);
   color: var(--text-secondary);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   text-align: left;
   cursor: default;
 }
@@ -238,7 +238,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
 .domain-row strong {
   overflow: hidden;
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -249,14 +249,14 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
   border-radius: 3px;
   background: var(--border-soft);
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-variant-numeric: tabular-nums;
   text-align: center;
 }
 
 .domain-summary {
   margin-left: 3px;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
 }
 
@@ -272,7 +272,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
   padding: 0 12px;
   border-bottom: 1px solid var(--border);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
@@ -290,7 +290,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
   background: transparent;
   color: var(--text);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-md);
   text-align: left;
   cursor: default;
 }
@@ -316,7 +316,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
   min-width: 0;
   overflow: hidden;
   color: var(--accent-strong);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -341,7 +341,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
   border-radius: 3px;
   background: var(--mock-soft);
   color: var(--mock);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
 }
 
@@ -350,7 +350,7 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
   border-radius: 3px;
   background: var(--border-soft);
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
 }
 
@@ -378,11 +378,11 @@ onBeforeUnmount(() => resizeObserver?.disconnect())
   flex-direction: column;
   gap: 8px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-md);
 }
 
 .empty-state strong {
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-size-lg);
 }
 </style>

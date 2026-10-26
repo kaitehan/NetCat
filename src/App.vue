@@ -32,9 +32,12 @@ const AboutPage = defineAsyncComponent(() => import('./features/about/AboutPage.
 const DiagnosticPanel = defineAsyncComponent(() => import('./features/diagnostics/DiagnosticPanel.vue'))
 const TrafficInspector = defineAsyncComponent(() => import('./features/traffic/TrafficInspector.vue'))
 const ReplayEditor = defineAsyncComponent(() => import('./features/replay/ReplayEditor.vue'))
+const ScriptWorkspace = defineAsyncComponent(() => import('./features/scripts/ScriptWorkspace.vue'))
+const PinningWorkspace = defineAsyncComponent(() => import('./features/pinning/PinningWorkspace.vue'))
+const NetworkProfileEditor = defineAsyncComponent(() => import('./features/network/NetworkProfileEditor.vue'))
 
 const capture = useNetCat()
-const activeView = shallowRef<'traffic' | 'mocks' | 'settings' | 'about'>('traffic')
+const activeView = shallowRef<'traffic' | 'mocks' | 'scripts' | 'pinning' | 'settings' | 'about'>('traffic')
 const mockEditorOpen = shallowRef(false)
 const replayEditorOpen = shallowRef(false)
 const replayDraft = shallowRef<ReplayDraft | null>(null)
@@ -51,6 +54,7 @@ const contextRow = shallowRef<TrafficSummary | null>(null)
 const contextDetail = shallowRef<TrafficDetail | null>(null)
 const contextPosition = reactive({ x: 0, y: 0 })
 const diagnosticsOpen = shallowRef(false)
+const networkEditorOpen = shallowRef(false)
 const diagnosticDetail = shallowRef<DiagnosticTrafficDetail | null>(null)
 const diagnosticDetailLoading = shallowRef(false)
 const deviceScope = shallowRef<DeviceScope>('all')
@@ -100,6 +104,8 @@ const hostOptions = computed(() => [
 ])
 const hiddenRuleCount = computed(() => hiddenUrls.value.size + hiddenHosts.value.size)
 const contextOpen = computed(() => contextRow.value !== null)
+const toolbarlessView = computed(() => activeView.value !== 'traffic')
+const fullWorkspaceView = computed(() => ['scripts', 'pinning', 'settings', 'about'].includes(activeView.value))
 const contextDisabledReasons = computed<Partial<Record<TrafficMenuAction, string>>>(() => {
   const row = contextRow.value
   const detail = contextDetail.value
@@ -333,6 +339,13 @@ async function exportDiagnostics() {
   }
 }
 
+async function saveNetworkProfile(profile: import('./shared/types').NetworkProfile) {
+  await capture.saveNetworkProfile(profile)
+  if (!capture.error.value) {
+    networkEditorOpen.value = false
+  }
+}
+
 async function selectDiagnosticTraffic(id: string) {
   diagnosticDetailLoading.value = true
   try {
@@ -348,7 +361,7 @@ onMounted(() => void capture.initialize())
 
 <template>
   <div class="app-frame" :class="{ 'diagnostics-open': diagnosticsOpen }">
-    <div class="app-shell" :class="{ 'settings-active': activeView === 'settings' || activeView === 'about' }">
+    <div class="app-shell" :class="{ 'toolbarless-active': toolbarlessView }">
     <AppSidebar
       :active-view="activeView"
       :traffic-count="capture.traffic.value.length"
@@ -357,16 +370,20 @@ onMounted(() => void capture.initialize())
     />
 
     <TopToolbar
-      v-if="activeView === 'traffic' || activeView === 'mocks'"
+      v-if="activeView === 'traffic'"
       :status="capture.proxyStatus.value"
       :busy="capture.busy.value"
+      :network-profiles="capture.networkProfiles.value"
+      :active-network-profile-id="capture.activeNetworkProfileId.value"
       @toggle-proxy="capture.toggleProxy"
       @clear="capture.clearTraffic"
       @export="exportHar"
+      @activate-network-profile="capture.setActiveNetworkProfile"
+      @add-network-profile="networkEditorOpen = true"
     />
 
-    <div class="app-body" :class="{ 'settings-layout': activeView === 'settings' || activeView === 'about' }">
-      <main class="workspace" :class="{ 'settings-workspace': activeView === 'settings' || activeView === 'about' }">
+    <div class="app-body" :class="{ 'full-workspace-layout': fullWorkspaceView }">
+      <main class="workspace" :class="{ 'full-workspace': fullWorkspaceView }">
         <template v-if="activeView === 'traffic'">
           <DeviceTabs
             :model-value="deviceScope"
@@ -456,6 +473,30 @@ onMounted(() => void capture.initialize())
           @open-diagnostics="diagnosticsOpen = true"
           @export-diagnostics="exportDiagnostics"
         />
+        <ScriptWorkspace
+          v-else-if="activeView === 'scripts'"
+          :scripts="capture.scripts.value"
+          :busy="capture.busy.value"
+          :test-result="capture.scriptTestResult.value"
+          @save="capture.saveScript"
+          @delete="capture.deleteScript"
+          @toggle="capture.setScriptEnabled"
+          @test="capture.testScript"
+        />
+        <PinningWorkspace
+          v-else-if="activeView === 'pinning'"
+          :environment="capture.fridaEnvironment.value"
+          :devices="capture.fridaDevices.value"
+          :applications="capture.fridaApplications.value"
+          :scripts="capture.scripts.value"
+          :status="capture.pinningSession.value"
+          :logs="capture.pinningLogs.value"
+          :busy="capture.busy.value"
+          @refresh="capture.refreshFrida"
+          @load-applications="capture.loadFridaApplications"
+          @start="capture.startPinningSession"
+          @stop="capture.stopPinningSession"
+        />
         <AboutPage v-else />
       </main>
 
@@ -493,6 +534,10 @@ onMounted(() => void capture.initialize())
         @send="sendReplay"
         @cancel="replayEditorOpen = false"
       />
+    </div>
+
+    <div v-if="networkEditorOpen" class="drawer-backdrop" @click.self="networkEditorOpen = false">
+      <NetworkProfileEditor @save="saveNetworkProfile" @cancel="networkEditorOpen = false" />
     </div>
 
     <DisclaimerDialog
@@ -571,7 +616,7 @@ onMounted(() => void capture.initialize())
   grid-area: toolbar;
 }
 
-.app-shell.settings-active {
+.app-shell.toolbarless-active {
   grid-template-rows: minmax(0, 1fr) 20px;
   grid-template-areas:
     "sidebar body"
@@ -587,7 +632,7 @@ onMounted(() => void capture.initialize())
   gap: 10px;
 }
 
-.app-body.settings-layout {
+.app-body.full-workspace-layout {
   grid-template-columns: minmax(0, 1fr);
 }
 
@@ -606,7 +651,7 @@ onMounted(() => void capture.initialize())
   grid-row: 1 / -1;
 }
 
-.workspace.settings-workspace {
+.workspace.full-workspace {
   grid-template-rows: minmax(0, 1fr);
 }
 
@@ -641,13 +686,13 @@ onMounted(() => void capture.initialize())
   background: transparent;
   color: var(--text);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   flex: 1;
 }
 
 .result-count {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -660,7 +705,7 @@ onMounted(() => void capture.initialize())
   background: var(--surface);
   color: var(--text-secondary);
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   white-space: nowrap;
 }
 
@@ -690,14 +735,14 @@ onMounted(() => void capture.initialize())
 
 .mock-inspector h2 {
   margin: 0 0 8px;
-  font-size: 14px;
+  font-size: var(--font-size-xl);
 }
 
 .mock-inspector p,
 .mock-inspector dt,
 .mock-inspector dd {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   line-height: 1.65;
 }
 
@@ -725,7 +770,7 @@ onMounted(() => void capture.initialize())
   gap: 16px;
   background: transparent;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .status-limits {
@@ -771,12 +816,12 @@ onMounted(() => void capture.initialize())
 
 .error-banner strong {
   color: var(--danger);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .error-banner span {
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .error-banner button {
@@ -801,7 +846,7 @@ onMounted(() => void capture.initialize())
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
 }
 

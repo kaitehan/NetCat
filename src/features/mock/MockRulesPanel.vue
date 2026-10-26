@@ -131,13 +131,13 @@ function formatLastHit(value?: string | null) {
 
 .rules-header h1 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--font-size-xl);
 }
 
 .rules-header p {
   margin: 4px 0 0;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .add-button {
@@ -151,7 +151,7 @@ function formatLastHit(value?: string | null) {
   background: var(--accent);
   color: var(--on-accent);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-weight: 700;
 }
 
@@ -163,7 +163,7 @@ function formatLastHit(value?: string | null) {
   flex-direction: column;
   gap: 8px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .rule-tester {
@@ -184,6 +184,7 @@ function formatLastHit(value?: string | null) {
   background: var(--surface);
   color: var(--text);
   font: inherit;
+  font-size: var(--font-size-md);
 }
 
 .test-button {
@@ -197,6 +198,7 @@ function formatLastHit(value?: string | null) {
   background: var(--surface-hover);
   color: var(--text);
   font: inherit;
+  font-size: var(--font-size-md);
   font-weight: 700;
 }
 
@@ -207,7 +209,7 @@ function formatLastHit(value?: string | null) {
   gap: 8px;
   border-bottom: 1px solid var(--border-soft);
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .test-result strong {
@@ -220,7 +222,7 @@ function formatLastHit(value?: string | null) {
 
 .rules-empty strong {
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-size-lg);
 }
 
 .rules-list {
@@ -254,14 +256,14 @@ function formatLastHit(value?: string | null) {
 
 .rule-title strong {
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--font-size-md);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .rule-title span {
   color: var(--accent-strong);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
 }
 
@@ -276,7 +278,7 @@ function formatLastHit(value?: string | null) {
   overflow: hidden;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -285,7 +287,7 @@ function formatLastHit(value?: string | null) {
   display: block;
   margin-top: 4px;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .priority-actions {
@@ -301,12 +303,12 @@ function formatLastHit(value?: string | null) {
 
 .rule-response strong {
   color: var(--accent-strong);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .rule-response span {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .icon-button {

@@ -5,17 +5,22 @@ import {
   Play,
   Trash2
 } from '@lucide/vue'
-import type { ProxyStatus } from '../shared/types'
+import NetworkProfileMenu from '../features/network/NetworkProfileMenu.vue'
+import type { NetworkProfile, ProxyStatus } from '../shared/types'
 
 const { status, busy } = defineProps<{
   status: ProxyStatus
   busy: boolean
+  networkProfiles: readonly NetworkProfile[]
+  activeNetworkProfileId: string | null
 }>()
 
 const emit = defineEmits<{
   toggleProxy: []
   clear: []
   export: []
+  activateNetworkProfile: [id: string | null]
+  addNetworkProfile: []
 }>()
 </script>
 
@@ -44,6 +49,12 @@ const emit = defineEmits<{
     </div>
 
     <div class="utility-actions" role="group" aria-label="请求操作">
+      <NetworkProfileMenu
+        :profiles="networkProfiles"
+        :active-id="activeNetworkProfileId"
+        @activate="emit('activateNetworkProfile', $event)"
+        @add="emit('addNetworkProfile')"
+      />
       <button type="button" class="icon-tool" title="清空请求记录" aria-label="清空请求记录" @click="emit('clear')">
         <Trash2 :size="16" />
       </button>
@@ -56,13 +67,15 @@ const emit = defineEmits<{
 
 <style scoped>
 .toolbar {
+  position: relative;
+  z-index: 20;
   display: flex;
   min-width: 0;
   height: 52px;
   padding: 0 14px;
   align-items: center;
   gap: 16px;
-  overflow: hidden;
+  overflow: visible;
   border-radius: var(--radius-panel);
   background: var(--surface-translucent);
   box-shadow: var(--shadow-toolbar);
@@ -96,7 +109,7 @@ const emit = defineEmits<{
   background: var(--surface-raised);
   color: var(--text-secondary);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
   white-space: nowrap;
 }
@@ -123,7 +136,7 @@ const emit = defineEmits<{
   gap: 6px;
   flex: 1;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .status-dot {

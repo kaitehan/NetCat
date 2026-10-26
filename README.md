@@ -4,7 +4,7 @@
 
 > 本地守候每一次请求。
 
-NetCat（奈特猫）是一款面向开发者的本地 HTTP/HTTPS 调试代理。它提供流量捕获与筛选、请求编辑重放、Mock 规则、HAR 导出、cURL 复制、系统代理管理和本地 CA 管理，帮助开发者在一个桌面应用中完成接口分析、问题复现与响应模拟。
+NetCat（奈特猫）是一款面向开发者的本地 HTTP/HTTPS 调试代理。它提供流量捕获与筛选、请求编辑重放、Mock 规则、JavaScript 脚本、代理层弱网模拟、经授权的 SSL Pinning 调试、HAR 导出、系统代理和本地 CA 管理。
 
 NetCat 基于 Vue 3、Tauri 2 和 Rust 构建。请求记录、Mock 规则和应用设置默认保存在本机，不依赖账号、云服务、遥测或远程数据上传。
 
@@ -25,8 +25,11 @@ NetCat 与传统的 `netcat` / `nc` 命令行网络工具没有关联。本项�
 - 本机与多手机设备 Tab，以及关键词、方法、状态码和域名组合过滤
 - HAR 1.2 导出和可执行 cURL 复制
 - macOS 当前网络服务、Windows 当前用户的 HTTP/HTTPS 系统代理设置与恢复
+- 嵌入式 QuickJS 请求/响应脚本，支持改写 Header、URL、正文或直接生成响应
+- 高速 4G、低速 4G、3G、离线和自定义代理层弱网配置，切换即时生效
+- 外部 Frida 驱动的 Android/iOS SSL Pinning 调试工作区，支持 USB、Gadget、Spawn 和 Attach
 
-当前版本不解析 HTTP/2、QUIC、WebSocket 帧或非 HTTP TCP。开启证书固定的应用可能无法被解密。
+当前版本不解析 HTTP/2、QUIC、WebSocket 帧或非 HTTP TCP。Pinning 注入在 Windows 和移动端仍标记为实验性。
 
 ## 技术栈
 
@@ -120,6 +123,42 @@ cargo test --manifest-path src-tauri/Cargo.toml --test proxy_stress sustains_200
 
 请求页按“全部 / 本机 / 各设备”切换流量。已断开但仍有历史请求的设备继续显示；可在设置中改名、重新配对、断开，或在确认请求数量后删除该设备的全部历史请求。
 
+## JavaScript 脚本
+
+“脚本”工作区分别管理代理脚本与 Frida 注入脚本。代理脚本按优先级从高到低执行，同优先级按创建时间执行；实时代理和请求重放使用同一顺序：请求脚本 → 弱网上行/故障 → Mock 或上游 → 响应脚本 → 弱网下行 → 持久化。Mock-aware 重放执行完整管线，直连重放仅绕过 Mock。
+
+代理脚本可定义 `onRequest(ctx)` 和 `onResponse(ctx)`。返回值可包含 `method`、`url`、`headers`、`bodyText`、`bodyBase64`；`onRequest` 还可通过 `response: { status, headers, bodyText }` 直接生成响应。单次执行限制 100 ms 和 64 MB；脚本异常只回滚当前脚本并放行。解码后正文超过 10 MiB 或编码不支持时，`bodyEditable` 为 `false`，仍可修改 Header 和路由。
+
+```javascript
+function onRequest(ctx) {
+  return { headers: { ...ctx.headers, 'x-netcat-script': 'enabled' } };
+}
+
+function onResponse(ctx) {
+  return ctx.status === 200 ? { headers: { ...ctx.headers, 'cache-control': 'no-store' } } : {};
+}
+```
+
+QuickJS 沙箱不提供 Node.js、npm、文件系统、网络或进程 API。脚本保存在本机，不会上传，也不会从网络获取脚本。
+
+## 弱网模拟
+
+网络请求顶部工具栏的限流配置可选择“无限流、高速 4G、低速 4G、3G、离线”或自定义配置。内置参数分别为：高速 4G 20 ms / 下行 9000 Kbps / 上行 1500 Kbps；低速 4G 150 ms / 1600 / 750 Kbps；3G 100 ms / 750 / 250 Kbps；离线为 100% 超时。
+
+自定义配置支持延迟、抖动、上下行速率、超时/中断概率，以及方法和 URL 精确、包含或正则匹配。该功能只作用于 NetCat 代理层，不能模拟真实 IP 丢包、TCP 重排、拥塞窗口或链路层行为。
+
+## SSL Pinning 与 Frida
+
+NetCat 不安装 Frida、不部署 `frida-server`、不重打包或重签 APK/IPA，也不修改生产包。使用前自行安装兼容版本的 `frida-tools`，并在已授权测试设备上启动同主版本的 `frida-server`，或准备已集成 Gadget 的测试包：
+
+```bash
+python3 -m pip install frida-tools
+frida --version
+frida-ls-devices
+```
+
+在“SSL Pinning”工作区刷新环境，选择 USB 设备或填写 Gadget 地址，枚举应用/进程，选择 Spawn 或 Attach 与注入策略后启动。Android 内置策略覆盖 Conscrypt/TrustManager、OkHttp 和 WebView；iOS 覆盖 Security/NSURLSession、AFNetworking、Alamofire 和 TrustKit。框架升级、混淆、自定义 native TLS 或反调试可能需要自定义脚本。
+
 ## 故障恢复
 
 ### 手动关闭系统代理
@@ -159,6 +198,11 @@ Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Setti
 - 系统代理恢复失败：按对应平台的手动恢复步骤处理；macOS 检查网络服务名称，Windows 检查是否以同一用户运行及设置是否被其他程序更改。
 - Windows CA 不受信任：确认导入的是当前 NetCat CA，且位于当前用户的根证书存储；部分应用采用独立证书存储或证书固定。
 - Windows 界面无法启动：确认 Microsoft Edge WebView2 Runtime 已安装，缺失时先安装 Evergreen Runtime 后重试。
+- Frida 缺失：确认 `frida --version` 在启动 NetCat 的同一用户环境可执行，然后刷新环境。
+- Frida 版本不一致：让客户端、`frida-server` 或 Gadget 使用兼容的同主版本；重启设备端服务后重新枚举。
+- 设备断开或 Gadget 不可达：检查 USB 授权、端口转发、防火墙和 Gadget 地址；停止旧会话后重连。
+- 脚本超时或语法错误：查看脚本测试结果与诊断日志；单次执行超过 100 ms 会回滚该脚本并放行。
+- 请求异常变慢或超时：检查工具栏是否误启用了限流配置，切换“无限流”后复测。
 
 ## 卸载与删除 CA
 
@@ -194,11 +238,11 @@ security delete-generic-password -s com.kaitehan.netcat -a root-ca-private-key
 - 暂停捕获只停止创建新展示记录，代理转发仍继续。
 - 非法正则、Header、状态码、JSON 或延迟不会保存为运行时规则。
 - TLS 失败只提示“证书未信任或应用可能启用证书固定”，不会声称已识别具体原因。
+- Pinning、注入和脚本仅可用于自有或明确授权目标；本地脚本不会上传或联网获取。
 
 ## 下一步规划
 
 - HTTP/2 完整解析、WebSocket 帧级调试，以及 QUIC / HTTP/3 支持。
-- SSL Pinning 绕过、JavaScript 脚本系统和弱网模拟。
 - 自动更新、macOS 签名与公证，以及公开分发所需的合规工作。
 - 基础断点改包仍受性能和稳定性门禁约束；若未通过 0.3.0 门禁，则作为后续版本候选，不视为 0.3.0 已交付能力。
 

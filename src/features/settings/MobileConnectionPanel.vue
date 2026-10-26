@@ -188,7 +188,7 @@ function rename(device: { deviceToken: string; name: string }) {
 .device-list-heading strong {
   margin: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-size-lg);
 }
 
 .panel-heading p,
@@ -197,7 +197,7 @@ function rename(device: { deviceToken: string; name: string }) {
 .computer-note {
   margin: 4px 0 0;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
@@ -213,7 +213,7 @@ function rename(device: { deviceToken: string; name: string }) {
 .mode-control legend {
   padding: 0 0 7px;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .mode-control label {
@@ -246,14 +246,14 @@ function rename(device: { deviceToken: string; name: string }) {
 
 .mode-control strong {
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .mode-control small,
 .number-control small,
 .device-row small {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .control-row {
@@ -271,7 +271,7 @@ function rename(device: { deviceToken: string; name: string }) {
   align-items: center;
   gap: 5px;
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .number-control span {
@@ -287,7 +287,7 @@ function rename(device: { deviceToken: string; name: string }) {
   background: var(--surface-raised);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .proxy-action,
@@ -303,7 +303,7 @@ function rename(device: { deviceToken: string; name: string }) {
   background: var(--accent);
   color: white;
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 650;
 }
 
@@ -338,7 +338,7 @@ input:disabled {
 .pairing-copy strong,
 .device-row strong {
   color: var(--text);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .mobile-workspace {
@@ -379,7 +379,7 @@ input:disabled {
   background: var(--surface);
   color: var(--text-muted);
   text-align: center;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .pairing-copy {
@@ -390,13 +390,13 @@ input:disabled {
 
 .pairing-copy > span {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .pairing-copy code {
   overflow: hidden;
   color: var(--text-secondary);
-  font-size: 8px;
+  font-size: var(--font-size-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -410,14 +410,14 @@ input:disabled {
 
 .device-list-heading span {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .empty-devices {
   margin: 22px 0;
   color: var(--text-muted);
   text-align: center;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .device-row {

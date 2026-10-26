@@ -54,20 +54,20 @@ import { APP_BRAND } from '../../shared/brand'
 .about-heading h1 {
   margin: 0;
   color: var(--text);
-  font-size: 18px;
+  font-size: var(--font-size-2xl);
 }
 
 .about-heading p {
   margin: 5px 0 0;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .about-description {
   max-width: 660px;
   margin: 24px 0 18px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-md);
   line-height: 1.75;
 }
 
@@ -81,7 +81,7 @@ import { APP_BRAND } from '../../shared/brand'
   display: grid;
   grid-template-columns: auto auto;
   gap: 10px;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .about-meta dt {

@@ -76,7 +76,7 @@ function select(scope: DeviceScope) {
   background: transparent;
   color: var(--text-muted);
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   cursor: pointer;
 }
 
@@ -100,6 +100,6 @@ function select(scope: DeviceScope) {
 
 .device-tabs small {
   color: var(--text-muted);
-  font-size: 8px;
+  font-size: var(--font-size-2xs);
 }
 </style>

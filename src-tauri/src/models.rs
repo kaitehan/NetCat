@@ -34,6 +34,9 @@ pub enum DiagnosticScope {
     Proxy,
     Mock,
     Replay,
+    Script,
+    Network,
+    Pinning,
     System,
 }
 
@@ -178,6 +181,124 @@ pub enum MatchKind {
     Regex,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ScriptKind {
+    Proxy,
+    Injection,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyScript {
+    pub id: String,
+    pub name: String,
+    pub enabled: bool,
+    pub priority: i64,
+    #[serde(default)]
+    pub methods: Vec<String>,
+    pub match_kind: MatchKind,
+    pub url_pattern: String,
+    pub source: String,
+    pub kind: ScriptKind,
+    #[serde(default)]
+    pub platform: Option<String>,
+    #[serde(default)]
+    pub builtin: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum NetworkProfileKind {
+    Preset,
+    Custom,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkProfile {
+    pub id: String,
+    pub name: String,
+    pub kind: NetworkProfileKind,
+    pub latency_ms: u64,
+    pub jitter_ms: u64,
+    pub download_kbps: Option<u64>,
+    pub upload_kbps: Option<u64>,
+    pub timeout_percent: u8,
+    pub disconnect_percent: u8,
+    #[serde(default)]
+    pub methods: Vec<String>,
+    pub match_kind: MatchKind,
+    pub url_pattern: String,
+    #[serde(default)]
+    pub builtin: bool,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FridaDevice {
+    pub id: String,
+    pub kind: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FridaApplication {
+    pub pid: Option<u32>,
+    pub name: String,
+    pub identifier: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct FridaEnvironmentStatus {
+    pub available: bool,
+    pub version: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PinningLaunchMode {
+    Spawn,
+    Attach,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PinningSessionConfig {
+    pub device_id: String,
+    pub target: String,
+    pub mode: PinningLaunchMode,
+    #[serde(default)]
+    pub script_ids: Vec<String>,
+    #[serde(default)]
+    pub gadget_address: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PinningSessionStatus {
+    pub state: String,
+    pub target: Option<String>,
+    pub process_id: Option<u32>,
+    pub error: Option<String>,
+}
+
+impl Default for PinningSessionStatus {
+    fn default() -> Self {
+        Self {
+            state: "stopped".into(),
+            target: None,
+            process_id: None,
+            error: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct MockRule {
@@ -239,6 +360,9 @@ pub struct TrafficDraft {
     pub device_name: Option<String>,
     pub source_exchange_id: Option<String>,
     pub matched_mock_rule_id: Option<String>,
+    pub applied_script_ids: Vec<String>,
+    pub network_profile_id: Option<String>,
+    pub stage_timings: BTreeMap<String, u64>,
     pub error: Option<String>,
 }
 
@@ -261,6 +385,9 @@ pub struct TrafficSummary {
     pub device_name: Option<String>,
     pub source_exchange_id: Option<String>,
     pub matched_mock_rule_id: Option<String>,
+    pub applied_script_ids: Vec<String>,
+    pub network_profile_id: Option<String>,
+    pub stage_timings: BTreeMap<String, u64>,
     pub error: Option<String>,
 }
 

@@ -342,7 +342,7 @@ function stopResize() {
   background: transparent;
   color: #939cab;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .panel-tabs button[aria-selected='true'] {
@@ -361,7 +361,7 @@ function stopResize() {
 
 .panel-tabs span {
   color: #727c8c;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .icon-button,
@@ -410,7 +410,7 @@ function stopResize() {
   align-items: center;
   gap: 6px;
   color: #7f8998;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .panel-toolbar select {
@@ -421,7 +421,7 @@ function stopResize() {
   background: #20252c;
   color: #d8dee9;
   font: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .log-search {
@@ -438,14 +438,14 @@ function stopResize() {
 .toolbar-count {
   margin-left: auto;
   color: #727c8c;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .toolbar-button {
   height: 26px;
   padding: 0 5px;
   gap: 5px;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .console-view {
@@ -465,7 +465,7 @@ function stopResize() {
   gap: 6px;
   border-bottom: 1px solid #242932;
   color: #b9c1ce;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
@@ -511,7 +511,7 @@ function stopResize() {
 .log-content code {
   overflow: hidden;
   color: #7c8797;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -530,7 +530,7 @@ function stopResize() {
   padding: 20px;
   place-items: center;
   color: #687384;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   text-align: center;
 }
 
@@ -565,7 +565,7 @@ function stopResize() {
   border-bottom: 1px solid #303640;
   background: #1b1f25;
   color: #7f8998;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .network-heading span:last-child {
@@ -600,14 +600,14 @@ function stopResize() {
 .method {
   color: #70b7ff;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
 }
 
 .request-url {
   overflow: hidden;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -615,7 +615,7 @@ function stopResize() {
 .request-status {
   color: #75d19a;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   text-align: right;
 }
 
@@ -638,7 +638,7 @@ function stopResize() {
   overflow-wrap: anywhere;
   color: #e5eaf1;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   line-height: 1.5;
 }
@@ -656,7 +656,7 @@ function stopResize() {
   border-radius: 4px;
   background: #1b2026;
   color: #9ca6b5;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .header-block {
@@ -666,7 +666,7 @@ function stopResize() {
 .header-block h3 {
   margin: 0 0 7px;
   color: #8f9baa;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   text-transform: uppercase;
 }
@@ -677,7 +677,7 @@ function stopResize() {
   overflow-wrap: anywhere;
   color: #c7cfda;
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   line-height: 1.45;
 }
 </style>

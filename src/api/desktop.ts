@@ -9,17 +9,25 @@ import type {
   CertificateTrustState,
   CertificateTrustDetails,
   DiagnosticLog,
+  FridaApplication,
+  FridaDevice,
+  FridaEnvironmentStatus,
   MockRule,
   MockRuleTestResult,
+  NetworkProfile,
+  PinningSessionConfig,
+  PinningSessionStatus,
   PlatformInfo,
   PairedDevice,
   PairingChallenge,
   ProxyConfig,
   ProxyStatus,
+  ProxyScript,
   ReplayMode,
   ReplayDraft,
   ReplayRequest,
   ReplayResult,
+  ScriptTestResult,
   SystemProxyStatus,
   TrafficCopyKind,
   TrafficDetail,
@@ -33,6 +41,9 @@ export type DesktopEvent =
   | 'storage-warning'
   | 'diagnostic-log'
   | 'paired-devices-changed'
+  | 'network-profile-changed'
+  | 'pinning-session-changed'
+  | 'pinning-log'
 
 export interface DesktopApi {
   getPlatformInfo(): Promise<PlatformInfo>
@@ -71,6 +82,23 @@ export interface DesktopApi {
   duplicateMockRule?(id: string): Promise<MockRule>
   reorderMockRules?(orderedIds: readonly string[]): Promise<void>
   testMockRules?(method: string, url: string): Promise<MockRuleTestResult>
+  listScripts(): Promise<ProxyScript[]>
+  saveScript(script: ProxyScript): Promise<ProxyScript>
+  deleteScript(id: string): Promise<void>
+  setScriptEnabled(id: string, enabled: boolean): Promise<void>
+  reorderScripts(orderedIds: readonly string[]): Promise<void>
+  testProxyScript(script: ProxyScript, method: string, url: string, headers: Readonly<Record<string, string>>, bodyText: string): Promise<ScriptTestResult>
+  listNetworkProfiles(): Promise<NetworkProfile[]>
+  saveNetworkProfile(profile: NetworkProfile): Promise<NetworkProfile>
+  deleteNetworkProfile(id: string): Promise<void>
+  getActiveNetworkProfile(): Promise<string | null>
+  setActiveNetworkProfile(id: string | null): Promise<void>
+  getFridaEnvironment(): Promise<FridaEnvironmentStatus>
+  listFridaDevices(): Promise<FridaDevice[]>
+  listFridaApplications(deviceId: string): Promise<FridaApplication[]>
+  getPinningSessionStatus(): Promise<PinningSessionStatus>
+  startPinningSession(config: PinningSessionConfig): Promise<PinningSessionStatus>
+  stopPinningSession(): Promise<PinningSessionStatus>
   exportHar(): Promise<void>
   copyCurl(id: string): Promise<void>
   copyExchange(id: string, kind: TrafficCopyKind): Promise<void>
@@ -149,6 +177,44 @@ const browserRows: TrafficSummary[] = [
     error: '上游连接失败'
   }
 ]
+
+const browserScripts: ProxyScript[] = [
+  {
+    id: 'builtin-android-pinning',
+    name: 'Android 常见 TLS 栈',
+    enabled: true,
+    priority: 100,
+    methods: [],
+    matchKind: 'contains',
+    urlPattern: '',
+    source: 'Java.perform(function () {});',
+    kind: 'injection',
+    platform: 'android',
+    builtin: true,
+    createdAt: '2026-10-26T00:00:00Z'
+  },
+  {
+    id: 'builtin-ios-pinning',
+    name: 'iOS 常见 TLS 栈',
+    enabled: true,
+    priority: 100,
+    methods: [],
+    matchKind: 'contains',
+    urlPattern: '',
+    source: "send({ type: 'netcat', message: 'iOS hooks installed' });",
+    kind: 'injection',
+    platform: 'ios',
+    builtin: true,
+    createdAt: '2026-10-26T00:00:00Z'
+  }
+]
+const browserNetworkProfiles: NetworkProfile[] = [
+  { id: 'fast-4g', name: '高速 4G', kind: 'preset', latencyMs: 20, jitterMs: 0, downloadKbps: 9000, uploadKbps: 1500, timeoutPercent: 0, disconnectPercent: 0, methods: [], matchKind: 'contains', urlPattern: '', builtin: true, createdAt: '2026-10-26T00:00:00Z' },
+  { id: 'slow-4g', name: '低速 4G', kind: 'preset', latencyMs: 150, jitterMs: 0, downloadKbps: 1600, uploadKbps: 750, timeoutPercent: 0, disconnectPercent: 0, methods: [], matchKind: 'contains', urlPattern: '', builtin: true, createdAt: '2026-10-26T00:00:00Z' },
+  { id: '3g', name: '3G', kind: 'preset', latencyMs: 100, jitterMs: 0, downloadKbps: 750, uploadKbps: 250, timeoutPercent: 0, disconnectPercent: 0, methods: [], matchKind: 'contains', urlPattern: '', builtin: true, createdAt: '2026-10-26T00:00:00Z' },
+  { id: 'offline', name: '离线', kind: 'preset', latencyMs: 0, jitterMs: 0, downloadKbps: null, uploadKbps: null, timeoutPercent: 100, disconnectPercent: 0, methods: [], matchKind: 'contains', urlPattern: '', builtin: true, createdAt: '2026-10-26T00:00:00Z' }
+]
+let browserActiveNetworkProfile: string | null = null
 
 const browserMocks: MockRule[] = [
   {
@@ -357,6 +423,76 @@ const browserApi: DesktopApi = {
       .map((rule) => ({ ruleId: rule.id, name: rule.name, priority: rule.priority }))
     return { matches, selectedRuleId: matches[0]?.ruleId ?? null, conflict: matches.length > 1 }
   },
+  async listScripts() {
+    return browserScripts
+  },
+  async saveScript(script) {
+    const saved = { ...script, id: script.id || crypto.randomUUID(), createdAt: script.createdAt || new Date().toISOString() }
+    const index = browserScripts.findIndex((candidate) => candidate.id === saved.id)
+    if (index >= 0) {
+      browserScripts[index] = saved
+    } else {
+      browserScripts.push(saved)
+    }
+    return saved
+  },
+  async deleteScript(id) {
+    const index = browserScripts.findIndex((candidate) => candidate.id === id)
+    if (index >= 0) {
+      browserScripts.splice(index, 1)
+    }
+  },
+  async setScriptEnabled(id, enabled) {
+    const script = browserScripts.find((candidate) => candidate.id === id)
+    if (script) {
+      script.enabled = enabled
+    }
+  },
+  async reorderScripts(orderedIds) {
+    const byId = new Map(browserScripts.map((script) => [script.id, script]))
+    browserScripts.splice(0, browserScripts.length, ...orderedIds.map((id) => byId.get(id)!).filter(Boolean))
+  },
+  async testProxyScript(_script, method, url, headers, bodyText) {
+    return { request: { method, url, headers, bodyText }, appliedScriptIds: [], errors: [], syntheticResponse: null }
+  },
+  async listNetworkProfiles() {
+    return browserNetworkProfiles
+  },
+  async saveNetworkProfile(profile) {
+    const saved = { ...profile, id: profile.id || crypto.randomUUID(), createdAt: profile.createdAt || new Date().toISOString() }
+    browserNetworkProfiles.push(saved)
+    return saved
+  },
+  async deleteNetworkProfile(id) {
+    const index = browserNetworkProfiles.findIndex((profile) => profile.id === id && !profile.builtin)
+    if (index >= 0) {
+      browserNetworkProfiles.splice(index, 1)
+    }
+  },
+  async getActiveNetworkProfile() {
+    return browserActiveNetworkProfile
+  },
+  async setActiveNetworkProfile(id) {
+    browserActiveNetworkProfile = id
+  },
+  async getFridaEnvironment() {
+    return { available: false, version: null, error: '浏览器预览不支持 Frida' }
+  },
+  async listFridaDevices() {
+    return []
+  },
+  async listFridaApplications() {
+    return []
+  },
+  async getPinningSessionStatus() {
+    return { state: 'stopped', target: null, processId: null, error: null }
+  },
+  async startPinningSession() {
+    throw { code: 'FRIDA_UNAVAILABLE', message: '浏览器预览不支持 Frida' } satisfies AppError
+  },
+  async stopPinningSession() {
+    return { state: 'stopped', target: null, processId: null, error: null }
+  },
   async exportHar() {},
   async copyCurl(id) {
     const row = browserRows.find((candidate) => candidate.id === id)
@@ -480,6 +616,23 @@ const tauriApi: DesktopApi = {
   duplicateMockRule: (id) => invoke('duplicate_mock_rule', { id }),
   reorderMockRules: (orderedIds) => invoke('reorder_mock_rules', { orderedIds }),
   testMockRules: (method, url) => invoke('test_mock_rules', { method, url }),
+  listScripts: () => invoke('list_scripts'),
+  saveScript: (script) => invoke('save_script', { script }),
+  deleteScript: (id) => invoke('delete_script', { id }),
+  setScriptEnabled: (id, enabled) => invoke('set_script_enabled', { id, enabled }),
+  reorderScripts: (orderedIds) => invoke('reorder_scripts', { orderedIds }),
+  testProxyScript: (script, method, url, headers, bodyText) => invoke('test_proxy_script', { script, method, url, headers, bodyText }),
+  listNetworkProfiles: () => invoke('list_network_profiles'),
+  saveNetworkProfile: (profile) => invoke('save_network_profile', { profile }),
+  deleteNetworkProfile: (id) => invoke('delete_network_profile', { id }),
+  getActiveNetworkProfile: () => invoke('get_active_network_profile'),
+  setActiveNetworkProfile: (id) => invoke('set_active_network_profile', { id }),
+  getFridaEnvironment: () => invoke('get_frida_environment'),
+  listFridaDevices: () => invoke('list_frida_devices'),
+  listFridaApplications: (deviceId) => invoke('list_frida_applications', { deviceId }),
+  getPinningSessionStatus: () => invoke('get_pinning_session_status'),
+  startPinningSession: (config) => invoke('start_pinning_session', { config }),
+  stopPinningSession: () => invoke('stop_pinning_session'),
   async exportHar() {
     const destination = await save({ defaultPath: 'netcat-session.har', filters: [{ name: 'HTTP Archive', extensions: ['har'] }] })
     if (destination) {

@@ -64,6 +64,9 @@ fn draft(index: usize, response_body: Vec<u8>) -> TrafficDraft {
         device_name: None,
         source_exchange_id: None,
         matched_mock_rule_id: None,
+        applied_script_ids: Vec::new(),
+        network_profile_id: None,
+        stage_timings: Default::default(),
         error: None,
     }
 }

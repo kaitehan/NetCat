@@ -27,6 +27,9 @@ fn mobile_exchange(id: &str, device_token: &str, device_name: &str) -> TrafficDr
         device_name: Some(device_name.into()),
         source_exchange_id: None,
         matched_mock_rule_id: None,
+        applied_script_ids: Vec::new(),
+        network_profile_id: None,
+        stage_timings: Default::default(),
         error: None,
     }
 }

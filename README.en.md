@@ -4,7 +4,7 @@
 
 > Watching over every request, locally.
 
-NetCat is a local HTTP/HTTPS debugging proxy for developers. It brings traffic capture and filtering, editable request replay, mock rules, HAR export, cURL copy, system proxy management, and local CA management into one desktop application for API inspection, issue reproduction, and response simulation.
+NetCat is a local HTTP/HTTPS debugging proxy for developers. It combines traffic inspection, editable replay, mocks, JavaScript scripting, proxy-layer network simulation, authorized SSL pinning diagnostics, HAR export, system proxy management, and local CA management.
 
 NetCat is built with Vue 3, Tauri 2, and Rust. Request history, mock rules, and application settings stay on your device by default. No account, cloud service, telemetry, or remote data upload is required.
 
@@ -23,8 +23,11 @@ NetCat is not affiliated with the traditional `netcat` / `nc` command-line netwo
 - Local and per-device tabs plus combined keyword, method, status, and domain filters
 - HAR 1.2 export and executable cURL copy
 - HTTP/HTTPS system proxy configuration and recovery for the current network service on macOS and the current user on Windows
+- Embedded QuickJS request/response scripts for header, URL, body, and synthetic-response changes
+- Fast 4G, Slow 4G, 3G, Offline, and custom proxy-layer network profiles with immediate switching
+- External-Frida Android/iOS pinning workspace with USB, Gadget, Spawn, and Attach workflows
 
-The current release does not parse HTTP/2, QUIC, WebSocket frames, or non-HTTP TCP traffic. Applications that use certificate pinning may not be decryptable.
+The current release does not parse HTTP/2, QUIC, WebSocket frames, or non-HTTP TCP traffic. Pinning injection remains experimental on Windows and mobile targets.
 
 ## Technology Stack
 
@@ -120,6 +123,44 @@ Use the CA only in controlled development environments. Do not install it on pro
 
 Use the All, Local, and per-device tabs on the request page to switch traffic sources. A disconnected device remains visible while it has history. Settings provides rename, re-pair, disconnect, and confirmed deletion of all history for that device.
 
+## JavaScript Scripts
+
+The Scripts workspace separates proxy scripts from Frida injection scripts. Enabled proxy scripts run by descending priority and creation time. Live traffic and replay share this order: request scripts → upload network conditions/faults → mock or upstream → response scripts → download network conditions → persistence. Mock-aware replay uses the full pipeline; direct replay only bypasses mocks.
+
+Scripts may define `onRequest(ctx)` and `onResponse(ctx)` and return `method`, `url`, `headers`, `bodyText`, or `bodyBase64`. `onRequest` may return `response: { status, headers, bodyText }`. Each execution is limited to 100 ms and 64 MB. A failing script is rolled back and traffic continues. Bodies over 10 MiB after decoding, or unsupported encodings, cannot be rewritten, but headers and routing remain editable.
+
+```javascript
+function onRequest(ctx) {
+  return { headers: { ...ctx.headers, 'x-netcat-script': 'enabled' } };
+}
+
+function onResponse(ctx) {
+  return ctx.status === 200 ? { headers: { ...ctx.headers, 'cache-control': 'no-store' } } : {};
+}
+```
+
+The QuickJS sandbox exposes no Node.js, npm, filesystem, network, or process APIs. Scripts stay local, are never uploaded, and are not fetched from the network.
+
+## Network Simulation
+
+The traffic toolbar offers Unlimited, Fast 4G, Slow 4G, 3G, Offline, and custom throttling profiles. Presets are Fast 4G: 20 ms, 9000/1500 Kbps down/up; Slow 4G: 150 ms, 1600/750; 3G: 100 ms, 750/250; Offline: 100% timeout.
+
+Custom profiles support latency, jitter, upload/download rates, timeout/disconnect probability, method filters, and exact/substring/regex URL matching. This is proxy-layer simulation; it does not emulate actual IP packet loss, TCP reordering, congestion windows, or link-layer behavior.
+
+## SSL Pinning and Frida
+
+NetCat does not install Frida, deploy `frida-server`, repackage or re-sign APK/IPA files, or modify production packages. Install compatible `frida-tools` yourself and run a matching major version of `frida-server` on an authorized device, or prepare a test build with Gadget:
+
+```bash
+python3 -m pip install frida-tools
+frida --version
+frida-ls-devices
+```
+
+Refresh the SSL Pinning workspace, choose USB or enter a Gadget address, enumerate the target, select Spawn or Attach and injection policies, then start the session. Android built-ins cover Conscrypt/TrustManager, OkHttp, and WebView. iOS built-ins cover Security/NSURLSession, AFNetworking, Alamofire, and TrustKit. Framework changes, obfuscation, custom native TLS, or anti-debugging may require a custom script.
+
+Troubleshooting: ensure `frida --version` works for the same user; align client/server/Gadget major versions; check USB authorization, forwarding, firewall, and Gadget address after disconnects; fix syntax or executions exceeding 100 ms; and switch throttling to Unlimited when requests become unexpectedly slow or time out.
+
 ## Recovery
 
 ### Manually Disable the System Proxy
@@ -194,11 +235,11 @@ Deleting application data permanently removes local traffic, mock rules, and set
 - Pausing capture only stops the creation of new display records; proxy forwarding continues.
 - Invalid regular expressions, headers, status codes, JSON, or delay values are rejected before a mock rule can become active.
 - A TLS failure is reported only as an untrusted certificate or possible certificate pinning. NetCat does not claim to identify the exact cause.
+- Pinning, injection, and scripts are for owned or explicitly authorized targets only. Local scripts are never uploaded or downloaded.
 
 ## Roadmap
 
 - Full HTTP/2 parsing, WebSocket frame-level debugging, and QUIC / HTTP/3 support
-- SSL pinning bypass, a JavaScript scripting system, and network condition simulation
 - Automatic updates, macOS signing and notarization, and compliance work required for public distribution
 - Basic request and response breakpoints remain gated by performance and stability requirements. If they do not pass the 0.3.0 gate, they remain a future candidate and are not considered delivered in 0.3.0.
 

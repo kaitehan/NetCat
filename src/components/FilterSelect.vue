@@ -168,7 +168,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', handlePointerD
   background: var(--surface);
   color: var(--text-secondary);
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   line-height: 1;
 }
 
@@ -233,7 +233,7 @@ onBeforeUnmount(() => document.removeEventListener('pointerdown', handlePointerD
   background: transparent;
   color: var(--text-secondary);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   text-align: left;
   white-space: nowrap;
 }

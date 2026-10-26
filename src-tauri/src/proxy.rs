@@ -31,12 +31,14 @@ use crate::{
     export::filtered_request_headers,
     models::{
         DiagnosticLevel, DiagnosticLog, DiagnosticScope, MockRule, ProxyConfig, ProxyMode,
-        ProxyState, ProxyStatus, ReplayMode, ReplayRequest, ReplayResult, TrafficDraft,
-        TrafficOrigin, TrafficSummary,
+        ProxyScript, ProxyState, ProxyStatus, ReplayMode, ReplayRequest, ReplayResult,
+        TrafficDraft, TrafficOrigin, TrafficSummary,
     },
+    network::{builtin_network_profiles, NetworkConditioner, NetworkFailure, TransferDirection},
     pairing::{NoopPairingEventSink, PairingService},
     platform::PortInspector,
     rules::RuntimeMockRules,
+    script::{PipelineRequest, PipelineResponse, ScriptEngine},
     storage::Store,
 };
 
@@ -185,7 +187,33 @@ impl ProxyService {
                     .with_action("请选择普通 HTTP 或 HTTPS 请求"),
             );
         }
-        let parsed_url = url::Url::parse(&request.url).map_err(|error| {
+        let mut pipeline_request = PipelineRequest {
+            method: request.method,
+            url: request.url,
+            headers: request.headers,
+            body: request.body,
+        };
+        let scripts = self.store.list_scripts()?;
+        let network = active_network_conditioner(&self.store)?;
+        let request_script_started = Instant::now();
+        let script_report = ScriptEngine.apply_request(&mut pipeline_request, &scripts);
+        let mut stage_timings = BTreeMap::from([(
+            "requestScript".to_string(),
+            request_script_started.elapsed().as_millis() as u64,
+        )]);
+        for failure in &script_report.errors {
+            self.event_sink.diagnostic_log(
+                &DiagnosticLog::new(
+                    DiagnosticLevel::Warn,
+                    DiagnosticScope::Script,
+                    "script.failed",
+                    "请求脚本执行失败，已放行当前流量",
+                )
+                .with_exchange_id(&request.source_exchange_id)
+                .with_detail("scriptId", failure.script_id.clone()),
+            );
+        }
+        let parsed_url = url::Url::parse(&pipeline_request.url).map_err(|error| {
             AppError::new("REPLAY_INVALID_URL", "请求 URL 无效").with_detail(error.to_string())
         })?;
         if !matches!(parsed_url.scheme(), "http" | "https") {
@@ -204,17 +232,17 @@ impl ProxyService {
         let id = uuid::Uuid::new_v4().to_string();
         let started = Instant::now();
         let started_at = Utc::now().to_rfc3339();
-        let base = TrafficDraft {
+        let mut base = TrafficDraft {
             id: id.clone(),
             started_at: started_at.clone(),
-            method: request.method,
-            url: request.url,
+            method: pipeline_request.method.clone(),
+            url: pipeline_request.url.clone(),
             host: parsed_url.host_str().unwrap_or_default().to_string(),
             status: None,
             duration_ms: None,
-            request_headers: request.headers,
+            request_headers: pipeline_request.headers.clone(),
             response_headers: BTreeMap::new(),
-            request_body: request.body,
+            request_body: pipeline_request.body.clone(),
             response_body: Vec::new(),
             content_type: None,
             mocked: false,
@@ -223,11 +251,63 @@ impl ProxyService {
             device_name: original.summary.device_name.clone(),
             source_exchange_id: Some(request.source_exchange_id),
             matched_mock_rule_id: None,
+            applied_script_ids: script_report.applied_script_ids.clone(),
+            network_profile_id: network.profile().map(|profile| profile.id.clone()),
+            stage_timings: stage_timings.clone(),
             error: None,
         };
         self.store.insert_exchange(base.clone())?;
         self.event_sink
             .traffic_created(&self.store.get_traffic_detail(&id)?.summary);
+
+        let upload_started = Instant::now();
+        let upload_result = apply_network_stage(
+            &network,
+            TransferDirection::Upload,
+            &pipeline_request.method,
+            &pipeline_request.url,
+            pipeline_request.body.len(),
+        )
+        .await;
+        stage_timings.insert(
+            "networkUpload".into(),
+            upload_started.elapsed().as_millis() as u64,
+        );
+        base.stage_timings = stage_timings.clone();
+        if let Err(error) = upload_result {
+            let mut failed = base;
+            failed.stage_timings = stage_timings;
+            failed.duration_ms = Some(started.elapsed().as_millis() as u64);
+            failed.error = Some(error.message.clone());
+            self.store.insert_exchange(failed)?;
+            self.event_sink
+                .traffic_updated(&self.store.get_traffic_detail(&id)?.summary);
+            return Err(error);
+        }
+
+        if let Some(synthetic) = script_report.synthetic_response {
+            let (response, body) = apply_response_pipeline(
+                &pipeline_request,
+                synthetic.status,
+                synthetic.headers,
+                synthetic.body,
+                &scripts,
+                &network,
+                &mut base.applied_script_ids,
+                &mut base.stage_timings,
+            )
+            .await?;
+            let mut completed = base;
+            completed.status = Some(response.status().as_u16());
+            completed.duration_ms = Some(started.elapsed().as_millis() as u64);
+            completed.response_headers = headers_to_map(response.headers());
+            completed.response_body = body;
+            completed.content_type = completed.response_headers.get("content-type").cloned();
+            self.store.insert_exchange(completed)?;
+            self.event_sink
+                .traffic_updated(&self.store.get_traffic_detail(&id)?.summary);
+            return self.replay_result(&id, false);
+        }
 
         if request.mode == ReplayMode::MockAware {
             self.refresh_rules()?;
@@ -268,11 +348,22 @@ impl ProxyService {
                         .with_detail("errorCode", error.code.clone()),
                     );
                 })?;
+                let (response, body) = apply_response_pipeline(
+                    &pipeline_request,
+                    response.status().as_u16(),
+                    headers_to_map(response.headers()),
+                    rule.response_body.as_bytes().to_vec(),
+                    &scripts,
+                    &network,
+                    &mut base.applied_script_ids,
+                    &mut base.stage_timings,
+                )
+                .await?;
                 let mut completed = base;
                 completed.status = Some(response.status().as_u16());
                 completed.duration_ms = Some(started.elapsed().as_millis() as u64);
                 completed.response_headers = headers_to_map(response.headers());
-                completed.response_body = rule.response_body.into_bytes();
+                completed.response_body = body;
                 completed.content_type = completed.response_headers.get("content-type").cloned();
                 completed.mocked = true;
                 completed.matched_mock_rule_id = Some(rule.id.clone());
@@ -338,12 +429,23 @@ impl ProxyService {
                         return Err(app_error);
                     }
                 };
+                let (response, body) = apply_response_pipeline(
+                    &pipeline_request,
+                    status,
+                    headers,
+                    body,
+                    &scripts,
+                    &network,
+                    &mut base.applied_script_ids,
+                    &mut base.stage_timings,
+                )
+                .await?;
                 let mut completed = base;
-                completed.status = Some(status);
+                completed.status = Some(response.status().as_u16());
                 completed.duration_ms = Some(started.elapsed().as_millis() as u64);
-                completed.response_headers = headers;
+                completed.response_headers = headers_to_map(response.headers());
                 completed.response_body = body;
-                completed.content_type = content_type;
+                completed.content_type = completed.response_headers.get("content-type").cloned();
                 self.store.insert_exchange(completed)?;
                 self.event_sink
                     .traffic_updated(&self.store.get_traffic_detail(&id)?.summary);
@@ -644,6 +746,11 @@ struct PendingExchange {
     origin: TrafficOrigin,
     device_token: Option<String>,
     device_name: Option<String>,
+    scripts: Vec<ProxyScript>,
+    network: NetworkConditioner,
+    applied_script_ids: Vec<String>,
+    network_profile_id: Option<String>,
+    stage_timings: BTreeMap<String, u64>,
     initial_persistence: Option<JoinHandle<()>>,
 }
 
@@ -733,7 +840,7 @@ impl HttpHandler for CaptureHandler {
             );
             return response.into();
         }
-        let (parts, body) = request.into_parts();
+        let (mut parts, body) = request.into_parts();
         let request_body = match body.collect().await {
             Ok(body) => body.to_bytes().to_vec(),
             Err(error) => {
@@ -744,8 +851,59 @@ impl HttpHandler for CaptureHandler {
                 .into()
             }
         };
-        let method = parts.method.to_string();
-        let url = parts.uri.to_string();
+        let original_method = parts.method.to_string();
+        let original_url = parts.uri.to_string();
+        let original_headers = headers_to_map(&parts.headers);
+        let mut pipeline_request = PipelineRequest {
+            method: original_method.clone(),
+            url: original_url.clone(),
+            headers: original_headers.clone(),
+            body: request_body,
+        };
+        let scripts = self.store.list_scripts().unwrap_or_else(|error| {
+            self.event_sink.storage_warning(&error);
+            Vec::new()
+        });
+        let network = active_network_conditioner(&self.store).unwrap_or_else(|error| {
+            self.event_sink.storage_warning(&error);
+            NetworkConditioner::default()
+        });
+        let request_script_started = Instant::now();
+        let script_report = ScriptEngine.apply_request(&mut pipeline_request, &scripts);
+        let mut stage_timings = BTreeMap::from([(
+            "requestScript".to_string(),
+            request_script_started.elapsed().as_millis() as u64,
+        )]);
+        for failure in &script_report.errors {
+            self.event_sink.diagnostic_log(
+                &DiagnosticLog::new(
+                    DiagnosticLevel::Warn,
+                    DiagnosticScope::Script,
+                    "script.failed",
+                    "请求脚本执行失败，已放行当前流量",
+                )
+                .with_detail("scriptId", failure.script_id.clone()),
+            );
+        }
+        let method = match pipeline_request.method.parse() {
+            Ok(method) => {
+                parts.method = method;
+                pipeline_request.method.clone()
+            }
+            Err(_) => original_method,
+        };
+        let url = match pipeline_request.url.parse() {
+            Ok(uri) => {
+                parts.uri = uri;
+                pipeline_request.url.clone()
+            }
+            Err(_) => original_url,
+        };
+        if let Ok(headers) = map_to_headers(&pipeline_request.headers) {
+            parts.headers = headers;
+        } else {
+            pipeline_request.headers = original_headers;
+        }
         let host = parts
             .uri
             .host()
@@ -767,7 +925,7 @@ impl HttpHandler for CaptureHandler {
             url: url.clone(),
             host,
             request_headers,
-            request_body: request_body.clone(),
+            request_body: pipeline_request.body.clone(),
             origin: if self.mode == ProxyMode::Mobile {
                 TrafficOrigin::Mobile
             } else {
@@ -775,6 +933,11 @@ impl HttpHandler for CaptureHandler {
             },
             device_token: identity.as_ref().map(|value| value.device_token.clone()),
             device_name: identity.map(|value| value.device_name),
+            scripts: scripts.clone(),
+            network: network.clone(),
+            applied_script_ids: script_report.applied_script_ids.clone(),
+            network_profile_id: network.profile().map(|profile| profile.id.clone()),
+            stage_timings: stage_timings.clone(),
             initial_persistence: None,
         };
         if self.capture_enabled.load(Ordering::Relaxed) {
@@ -785,7 +948,60 @@ impl HttpHandler for CaptureHandler {
                 PersistenceEvent::Created,
             ));
         }
-        let request = Request::from_parts(parts, Body::from(request_body));
+        let upload_started = Instant::now();
+        let upload_result = apply_network_stage(
+            &network,
+            TransferDirection::Upload,
+            &method,
+            &url,
+            pipeline_request.body.len(),
+        )
+        .await;
+        stage_timings.insert(
+            "networkUpload".into(),
+            upload_started.elapsed().as_millis() as u64,
+        );
+        pending.stage_timings = stage_timings;
+        if let Err(error) = upload_result {
+            let status = if error.code == "NETWORK_TIMEOUT" {
+                StatusCode::GATEWAY_TIMEOUT
+            } else {
+                StatusCode::BAD_GATEWAY
+            };
+            let response = simple_response(status, &error.message);
+            self.record(
+                pending,
+                &response,
+                Vec::new(),
+                false,
+                None,
+                Some(error.message),
+            );
+            return response.into();
+        }
+        if let Some(synthetic) = script_report.synthetic_response {
+            let request_context = pipeline_request.clone();
+            let (response, response_body) = apply_response_pipeline(
+                &request_context,
+                synthetic.status,
+                synthetic.headers,
+                synthetic.body,
+                &scripts,
+                &network,
+                &mut pending.applied_script_ids,
+                &mut pending.stage_timings,
+            )
+            .await
+            .unwrap_or_else(|error| {
+                (
+                    simple_response(StatusCode::BAD_GATEWAY, &error.message),
+                    Vec::new(),
+                )
+            });
+            self.record(pending, &response, response_body, false, None, None);
+            return response.into();
+        }
+        let request = Request::from_parts(parts, Body::from(pipeline_request.body.clone()));
         let selected_rule = {
             self.rules
                 .read()
@@ -814,14 +1030,27 @@ impl HttpHandler for CaptureHandler {
             }
             match build_mock_response(&rule) {
                 Ok(response) => {
-                    self.record(
-                        pending,
-                        &response,
-                        rule.response_body.as_bytes().to_vec(),
-                        true,
-                        Some(rule.id.clone()),
-                        None,
-                    );
+                    let status = response.status().as_u16();
+                    let headers = headers_to_map(response.headers());
+                    let body = rule.response_body.as_bytes().to_vec();
+                    let (response, body) = apply_response_pipeline(
+                        &pipeline_request,
+                        status,
+                        headers,
+                        body,
+                        &scripts,
+                        &network,
+                        &mut pending.applied_script_ids,
+                        &mut pending.stage_timings,
+                    )
+                    .await
+                    .unwrap_or_else(|error| {
+                        (
+                            simple_response(StatusCode::BAD_GATEWAY, &error.message),
+                            Vec::new(),
+                        )
+                    });
+                    self.record(pending, &response, body, true, Some(rule.id.clone()), None);
                     return response.into();
                 }
                 Err(error) => {
@@ -853,11 +1082,47 @@ impl HttpHandler for CaptureHandler {
         match body.collect().await {
             Ok(body) => {
                 let bytes = body.to_bytes().to_vec();
-                let response = Response::from_parts(parts, Body::from(bytes.clone()));
-                if let Some(pending) = self.pending.take() {
-                    self.record(pending, &response, bytes, false, None, None);
+                if let Some(mut pending) = self.pending.take() {
+                    let request = PipelineRequest {
+                        method: pending.method.clone(),
+                        url: pending.url.clone(),
+                        headers: pending.request_headers.clone(),
+                        body: pending.request_body.clone(),
+                    };
+                    let status = parts.status.as_u16();
+                    let headers = headers_to_map(&parts.headers);
+                    match apply_response_pipeline(
+                        &request,
+                        status,
+                        headers,
+                        bytes,
+                        &pending.scripts,
+                        &pending.network,
+                        &mut pending.applied_script_ids,
+                        &mut pending.stage_timings,
+                    )
+                    .await
+                    {
+                        Ok((response, body)) => {
+                            self.record(pending, &response, body, false, None, None);
+                            response
+                        }
+                        Err(error) => {
+                            let response = simple_response(StatusCode::BAD_GATEWAY, &error.message);
+                            self.record(
+                                pending,
+                                &response,
+                                Vec::new(),
+                                false,
+                                None,
+                                Some(error.message),
+                            );
+                            response
+                        }
+                    }
+                } else {
+                    Response::from_parts(parts, Body::from(bytes))
                 }
-                response
             }
             Err(error) => {
                 if let Some(pending) = self.pending.take() {
@@ -921,6 +1186,109 @@ fn proxy_mode_name(mode: ProxyMode) -> &'static str {
     }
 }
 
+fn active_network_conditioner(store: &Store) -> Result<NetworkConditioner, AppError> {
+    let Some(active_id) = store.active_network_profile_id()? else {
+        return Ok(NetworkConditioner::default());
+    };
+    let profile = builtin_network_profiles()
+        .into_iter()
+        .chain(store.list_network_profiles()?)
+        .find(|profile| profile.id == active_id);
+    Ok(NetworkConditioner::new(profile))
+}
+
+async fn apply_network_stage(
+    network: &NetworkConditioner,
+    direction: TransferDirection,
+    method: &str,
+    url: &str,
+    bytes: usize,
+) -> Result<(), AppError> {
+    if !network.matches(method, url) {
+        return Ok(());
+    }
+    let sample = pseudo_random(100) as u8;
+    if let Some(failure) = network.failure_for_sample(sample) {
+        return Err(match failure {
+            NetworkFailure::Timeout => AppError::new("NETWORK_TIMEOUT", "弱网配置模拟请求超时")
+                .with_action("可在网络请求工具栏停用或调整弱网配置"),
+            NetworkFailure::Disconnect => {
+                AppError::new("NETWORK_DISCONNECTED", "弱网配置模拟连接中断")
+                    .with_action("可在网络请求工具栏停用或调整弱网配置")
+            }
+        });
+    }
+    let jitter = network
+        .profile()
+        .map(|profile| pseudo_random(profile.jitter_ms.saturating_add(1)))
+        .unwrap_or(0);
+    let delay = network.delay_ms(direction, bytes, jitter);
+    if delay > 0 {
+        tokio::time::sleep(Duration::from_millis(delay)).await;
+    }
+    Ok(())
+}
+
+fn pseudo_random(upper_bound: u64) -> u64 {
+    if upper_bound == 0 {
+        return 0;
+    }
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.subsec_nanos() as u64 % upper_bound)
+        .unwrap_or(0)
+}
+
+async fn apply_response_pipeline(
+    request: &PipelineRequest,
+    status: u16,
+    headers: BTreeMap<String, String>,
+    body: Vec<u8>,
+    scripts: &[ProxyScript],
+    network: &NetworkConditioner,
+    applied_script_ids: &mut Vec<String>,
+    stage_timings: &mut BTreeMap<String, u64>,
+) -> Result<(Response<Body>, Vec<u8>), AppError> {
+    let mut pipeline_response = PipelineResponse {
+        status,
+        headers,
+        body,
+    };
+    let response_script_started = Instant::now();
+    let report = ScriptEngine.apply_response(request, &mut pipeline_response, scripts);
+    stage_timings.insert(
+        "responseScript".into(),
+        response_script_started.elapsed().as_millis() as u64,
+    );
+    for id in report.applied_script_ids {
+        if !applied_script_ids.contains(&id) {
+            applied_script_ids.push(id);
+        }
+    }
+    let download_started = Instant::now();
+    let download_result = apply_network_stage(
+        network,
+        TransferDirection::Download,
+        &request.method,
+        &request.url,
+        pipeline_response.body.len(),
+    )
+    .await;
+    stage_timings.insert(
+        "networkDownload".into(),
+        download_started.elapsed().as_millis() as u64,
+    );
+    download_result?;
+    let body = pipeline_response.body.clone();
+    let response = pipeline_response_to_http(
+        pipeline_response.status,
+        pipeline_response.headers,
+        pipeline_response.body,
+    )?;
+    Ok((response, body))
+}
+
 impl CaptureHandler {
     fn record(
         &self,
@@ -958,6 +1326,9 @@ impl CaptureHandler {
             device_name: pending.device_name,
             source_exchange_id: None,
             matched_mock_rule_id,
+            applied_script_ids: pending.applied_script_ids,
+            network_profile_id: pending.network_profile_id,
+            stage_timings: pending.stage_timings,
             error,
         };
         let persistence = self.persistence.clone();
@@ -1011,6 +1382,9 @@ impl PendingExchange {
             device_name: self.device_name.clone(),
             source_exchange_id: None,
             matched_mock_rule_id: None,
+            applied_script_ids: self.applied_script_ids.clone(),
+            network_profile_id: self.network_profile_id.clone(),
+            stage_timings: self.stage_timings.clone(),
             error: None,
         }
     }
@@ -1204,6 +1578,39 @@ pub fn build_mock_response(rule: &MockRule) -> Result<Response<Body>, AppError> 
         HeaderValue::from_str(&rule.response_body.len().to_string())
             .expect("body length is always a valid header value"),
     );
+    Ok(response)
+}
+
+fn map_to_headers(
+    headers: &BTreeMap<String, String>,
+) -> Result<hudsucker::hyper::HeaderMap, AppError> {
+    let mut output = hudsucker::hyper::HeaderMap::new();
+    for (name, value) in headers {
+        let name = HeaderName::from_bytes(name.as_bytes()).map_err(|error| {
+            AppError::new("SCRIPT_INVALID_HEADER", "脚本生成了无效的 Header 名称")
+                .with_detail(error.to_string())
+        })?;
+        let value = HeaderValue::from_str(value).map_err(|error| {
+            AppError::new("SCRIPT_INVALID_HEADER", "脚本生成了无效的 Header 内容")
+                .with_detail(error.to_string())
+        })?;
+        output.insert(name, value);
+    }
+    Ok(output)
+}
+
+fn pipeline_response_to_http(
+    status: u16,
+    headers: BTreeMap<String, String>,
+    body: Vec<u8>,
+) -> Result<Response<Body>, AppError> {
+    let status = StatusCode::from_u16(status).map_err(|error| {
+        AppError::new("SCRIPT_INVALID_STATUS", "脚本生成了无效的响应状态码")
+            .with_detail(error.to_string())
+    })?;
+    let mut response = Response::new(Body::from(body));
+    *response.status_mut() = status;
+    *response.headers_mut() = map_to_headers(&headers)?;
     Ok(response)
 }
 

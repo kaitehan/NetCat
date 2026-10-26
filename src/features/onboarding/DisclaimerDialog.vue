@@ -29,8 +29,9 @@ watch(() => open, (value) => {
       <h1 id="disclaimer-title">授权使用声明</h1>
       <p class="lead">{{ APP_BRAND.name }} 仅用于您拥有或已获得明确授权的应用、服务和接口调试。</p>
       <div class="statement">
-        <p>未经授权抓取、拦截或篡改第三方网络流量，可能违反网络安全和个人信息保护相关法律法规。</p>
-        <p>本工具不提供 SSL Pinning 绕过、注入、脱壳或其他规避安全校验的能力。</p>
+        <p>未经授权抓取、拦截、篡改或注入第三方应用和网络流量，可能违反网络安全和个人信息保护相关法律法规。</p>
+        <p>SSL Pinning、Frida 注入和 JavaScript 脚本仅用于自有或明确授权目标；脚本只保存在本机，不会上传或联网获取。</p>
+        <p>本工具不自动安装 Frida，不部署设备端组件，也不提供 APK/IPA 重打包、重签名或脱壳能力。</p>
       </div>
       <label class="acknowledgement">
         <input v-model="acknowledged" type="checkbox" />
@@ -81,14 +82,14 @@ watch(() => open, (value) => {
 .disclaimer-dialog h1 {
   margin: 0;
   color: var(--text);
-  font-size: 22px;
+  font-size: var(--font-size-3xl);
   line-height: 1.35;
 }
 
 .lead {
   margin: 8px 0 20px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: var(--font-size-lg);
   line-height: 1.7;
 }
 
@@ -97,7 +98,7 @@ watch(() => open, (value) => {
   border-left: 3px solid var(--warning);
   background: var(--warning-soft);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-md);
   line-height: 1.65;
 }
 
@@ -115,7 +116,7 @@ watch(() => open, (value) => {
   grid-template-columns: 18px 1fr;
   gap: 10px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--font-size-md);
   line-height: 1.55;
   cursor: pointer;
 }
@@ -135,7 +136,7 @@ watch(() => open, (value) => {
   background: var(--accent);
   color: var(--on-accent);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--font-size-lg);
   font-weight: 700;
 }
 
