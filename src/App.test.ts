@@ -241,6 +241,7 @@ describe('App', () => {
     const startProxy = vi.fn().mockResolvedValue({ ...status, state: 'running' })
     const enableSystemProxy = vi.fn()
     const api = {
+      ...desktopApi,
       ...platformApi(),
       getProxyStatus: vi.fn().mockResolvedValue(status),
       startProxy,
@@ -294,6 +295,7 @@ describe('App', () => {
 
   it('moves proxy and certificate configuration into the settings page', async () => {
     const api = {
+      ...desktopApi,
       ...platformApi(),
       getProxyStatus: vi.fn().mockResolvedValue(status),
       startProxy: vi.fn(),
@@ -333,7 +335,7 @@ describe('App', () => {
     await fireEvent.click(screen.getByRole('button', { name: '设置' }))
     expect(await screen.findByRole('heading', { name: '设置' })).toBeVisible()
     expect(screen.queryByRole('button', { name: '启动代理' })).not.toBeInTheDocument()
-    expect(container.querySelector('.app-shell')).toHaveClass('settings-active')
+    expect(container.querySelector('.app-shell')).toHaveClass('toolbarless-active')
     expect(screen.getByRole('tab', { name: '代理配置' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('spinbutton', { name: '代理端口' })).toHaveValue(28086)
     expect(screen.getByRole('checkbox', { name: '系统代理' })).toBeChecked()
@@ -354,6 +356,36 @@ describe('App', () => {
     expect(screen.getByText('奈特猫 · 本地守候每一次请求')).toBeVisible()
     expect(screen.queryByRole('button', { name: '启动代理' })).not.toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '设置' })).not.toBeInTheDocument()
+  })
+
+  it('opens Mock rules without the runtime toolbar and keeps the inspector column', async () => {
+    const api = windowsApi()
+    const { container } = renderWithApi(api)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Mock 规则' }))
+
+    expect(await screen.findByRole('heading', { name: 'Mock 规则' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: '规则执行顺序' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '启动代理' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '限流配置：无限流' })).not.toBeInTheDocument()
+    expect(container.querySelector('.app-shell')).toHaveClass('toolbarless-active')
+    expect(container.querySelector('.app-body')).not.toHaveClass('full-workspace-layout')
+  })
+
+  it.each([
+    ['脚本', 'JavaScript 脚本'],
+    ['SSL Pinning', 'SSL Pinning']
+  ])('opens %s in the full workspace layout', async (navigationLabel, heading) => {
+    const api = windowsApi()
+    const { container } = renderWithApi(api)
+
+    await fireEvent.click(screen.getByRole('button', { name: navigationLabel }))
+
+    expect(await screen.findByRole('heading', { name: heading })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '启动代理' })).not.toBeInTheDocument()
+    expect(container.querySelector('.app-shell')).toHaveClass('toolbarless-active')
+    expect(container.querySelector('.app-body')).toHaveClass('full-workspace-layout')
+    expect(container.querySelector('.workspace')).toHaveClass('full-workspace')
   })
 
   it('hides a URL for the session and creates a focused Mock draft from its response', async () => {
@@ -388,6 +420,7 @@ describe('App', () => {
       createdAt: '2026-10-23T09:00:00Z'
     }
     const api = {
+      ...desktopApi,
       ...platformApi(),
       getProxyStatus: vi.fn().mockResolvedValue(status),
       startProxy: vi.fn(),
@@ -455,6 +488,7 @@ describe('App', () => {
     const openDevtools = vi.fn().mockResolvedValue(undefined)
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     const api = {
+      ...desktopApi,
       ...platformApi(),
       getProxyStatus: vi.fn().mockResolvedValue(status),
       startProxy: vi.fn(),

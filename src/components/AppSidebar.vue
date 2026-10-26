@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { Braces, FlaskConical, Info, Network, Settings } from '@lucide/vue'
+import { Braces, FlaskConical, Info, Network, Settings, ShieldCheck } from '@lucide/vue'
 import appIcon from '../../src-tauri/icons/icon.png'
 import { APP_BRAND } from '../shared/brand'
 
 const { activeView, trafficCount, mockCount } = defineProps<{
-  activeView: 'traffic' | 'mocks' | 'settings' | 'about'
+  activeView: 'traffic' | 'mocks' | 'scripts' | 'pinning' | 'settings' | 'about'
   trafficCount: number
   mockCount: number
 }>()
 
 const emit = defineEmits<{
-  changeView: [view: 'traffic' | 'mocks' | 'settings' | 'about']
+  changeView: [view: 'traffic' | 'mocks' | 'scripts' | 'pinning' | 'settings' | 'about']
 }>()
 </script>
 
@@ -44,6 +44,24 @@ const emit = defineEmits<{
         <FlaskConical :size="16" />
         <span>Mock 规则</span>
         <b>{{ mockCount }}</b>
+      </button>
+      <button
+        type="button"
+        :class="{ active: activeView === 'scripts' }"
+        aria-label="脚本"
+        @click="emit('changeView', 'scripts')"
+      >
+        <Braces :size="16" />
+        <span>脚本</span>
+      </button>
+      <button
+        type="button"
+        :class="{ active: activeView === 'pinning' }"
+        aria-label="SSL Pinning"
+        @click="emit('changeView', 'pinning')"
+      >
+        <ShieldCheck :size="16" />
+        <span>SSL Pinning</span>
       </button>
     </nav>
 
@@ -112,14 +130,14 @@ const emit = defineEmits<{
 
 .brand strong {
   color: var(--sidebar-text);
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   font-weight: 750;
   line-height: 1.15;
 }
 
 .brand span {
   color: var(--sidebar-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 700;
   line-height: 1.2;
 }
@@ -144,7 +162,7 @@ const emit = defineEmits<{
   background: transparent;
   color: var(--sidebar-muted);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   text-align: left;
 }
 
@@ -164,7 +182,7 @@ const emit = defineEmits<{
 .navigation b {
   min-width: 22px;
   color: inherit;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
   text-align: right;
 }
@@ -175,7 +193,7 @@ const emit = defineEmits<{
   align-items: start;
   gap: 7px;
   color: var(--sidebar-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .sidebar-note p {
@@ -205,7 +223,7 @@ const emit = defineEmits<{
   background: transparent;
   color: var(--sidebar-muted);
   font-family: inherit;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   text-align: left;
   opacity: 0.78;
 }

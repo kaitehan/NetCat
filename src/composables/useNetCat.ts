@@ -6,15 +6,23 @@ import type {
   CaPrivateKeyState,
   CertificateTrustState,
   DiagnosticLog,
+  FridaApplication,
+  FridaDevice,
+  FridaEnvironmentStatus,
   MockRule,
   MockRuleTestResult,
+  NetworkProfile,
+  PinningSessionConfig,
+  PinningSessionStatus,
   PlatformInfo,
   ProxyConfig,
   ProxyStatus,
+  ProxyScript,
   ReplayDraft,
   ReplayMode,
   ReplayRequest,
   ReplayResult,
+  ScriptTestResult,
   SystemProxyStatus,
   TrafficCopyKind,
   TrafficDetail,
@@ -40,6 +48,15 @@ export function useNetCat() {
   const traffic = shallowRef<readonly TrafficSummary[]>([])
   const selectedDetail = shallowRef<TrafficDetail | null>(null)
   const mockRules = shallowRef<readonly MockRule[]>([])
+  const scripts = shallowRef<readonly ProxyScript[]>([])
+  const scriptTestResult = shallowRef<ScriptTestResult | null>(null)
+  const networkProfiles = shallowRef<readonly NetworkProfile[]>([])
+  const activeNetworkProfileId = shallowRef<string | null>(null)
+  const fridaEnvironment = shallowRef<FridaEnvironmentStatus>({ available: false, version: null, error: null })
+  const fridaDevices = shallowRef<readonly FridaDevice[]>([])
+  const fridaApplications = shallowRef<readonly FridaApplication[]>([])
+  const pinningSession = shallowRef<PinningSessionStatus>({ state: 'stopped', target: null, processId: null, error: null })
+  const pinningLogs = shallowRef<readonly string[]>([])
   const caStatus = shallowRef<CaStatus>({ generated: false, certificatePath: null, fingerprint: null })
   const platform = shallowRef<PlatformInfo | null>(null)
   const trustState = shallowRef<CertificateTrustState>('unavailable')
@@ -97,6 +114,7 @@ export function useNetCat() {
       trustState.value = certificateTrust.publicTrust
       privateKeyState.value = certificateTrust.privateKeyState
       disclaimerAccepted.value = disclaimer
+      await refreshFeatureState()
       unlisteners.push(await api.listen<ProxyStatus>('proxy-status-changed', (payload) => {
         proxyStatus.value = payload
         lanIp.value = payload.lanIp ?? lanIp.value
@@ -110,12 +128,38 @@ export function useNetCat() {
         diagnosticLogs.value = appendDiagnosticLog(diagnosticLogs.value, payload)
         writeDiagnosticLog(payload)
       }))
+      unlisteners.push(await api.listen<string | null>('network-profile-changed', (payload) => {
+        activeNetworkProfileId.value = payload
+      }))
+      unlisteners.push(await api.listen<PinningSessionStatus>('pinning-session-changed', (payload) => {
+        pinningSession.value = payload
+      }))
+      unlisteners.push(await api.listen<string>('pinning-log', (payload) => {
+        pinningLogs.value = [...pinningLogs.value.slice(-499), payload]
+      }))
     } catch (cause) {
       error.value = normalizeDesktopError(cause)
       disclaimerAccepted.value ??= false
     } finally {
       busy.value = false
     }
+  }
+
+  async function refreshFeatureState() {
+    const [loadedScripts, profiles, activeProfile, environment, devices, session] = await Promise.all([
+      api.listScripts(),
+      api.listNetworkProfiles(),
+      api.getActiveNetworkProfile(),
+      api.getFridaEnvironment(),
+      api.listFridaDevices().catch(() => []),
+      api.getPinningSessionStatus()
+    ])
+    scripts.value = loadedScripts
+    networkProfiles.value = profiles
+    activeNetworkProfileId.value = activeProfile
+    fridaEnvironment.value = environment
+    fridaDevices.value = devices
+    pinningSession.value = session
   }
 
   async function reloadTraffic() {
@@ -322,6 +366,76 @@ export function useNetCat() {
     }
   }
 
+  async function saveScript(script: ProxyScript) {
+    await runAction(async () => {
+      await api.saveScript(script)
+      scripts.value = await api.listScripts()
+    })
+  }
+
+  async function deleteScript(id: string) {
+    await runAction(async () => {
+      await api.deleteScript(id)
+      scripts.value = await api.listScripts()
+    })
+  }
+
+  async function setScriptEnabled(id: string, enabled: boolean) {
+    await runAction(async () => {
+      await api.setScriptEnabled(id, enabled)
+      scripts.value = await api.listScripts()
+    })
+  }
+
+  async function testScript(script: ProxyScript) {
+    await runAction(async () => {
+      scriptTestResult.value = await api.testProxyScript(script, 'GET', 'https://example.test/api', {}, '')
+    })
+  }
+
+  async function saveNetworkProfile(profile: NetworkProfile) {
+    await runAction(async () => {
+      const saved = await api.saveNetworkProfile(profile)
+      networkProfiles.value = await api.listNetworkProfiles()
+      await api.setActiveNetworkProfile(saved.id)
+      activeNetworkProfileId.value = saved.id
+    })
+  }
+
+  async function setActiveNetworkProfile(id: string | null) {
+    await runAction(async () => {
+      await api.setActiveNetworkProfile(id)
+      activeNetworkProfileId.value = id
+    })
+  }
+
+  async function refreshFrida() {
+    await runAction(async () => {
+      fridaEnvironment.value = await api.getFridaEnvironment()
+      fridaDevices.value = fridaEnvironment.value.available ? await api.listFridaDevices() : []
+      pinningSession.value = await api.getPinningSessionStatus()
+    })
+  }
+
+  async function loadFridaApplications(deviceId: string) {
+    await runAction(async () => {
+      fridaApplications.value = await api.listFridaApplications(deviceId)
+    })
+  }
+
+  async function startPinningSession(config: PinningSessionConfig) {
+    await runAction(async () => {
+      pinningLogs.value = []
+      pinningSession.value = await api.startPinningSession(config)
+    })
+  }
+
+  async function stopPinningSession() {
+    await runAction(async () => {
+      pinningSession.value = await api.stopPinningSession()
+    })
+  }
+
   async function generateCa() {
     await runAction(async () => {
       caStatus.value = await api.generateCa()
@@ -415,6 +529,15 @@ export function useNetCat() {
     traffic: readonly(traffic),
     selectedDetail: readonly(selectedDetail),
     mockRules: readonly(mockRules),
+    scripts: readonly(scripts),
+    scriptTestResult: readonly(scriptTestResult),
+    networkProfiles: readonly(networkProfiles),
+    activeNetworkProfileId: readonly(activeNetworkProfileId),
+    fridaEnvironment: readonly(fridaEnvironment),
+    fridaDevices: readonly(fridaDevices),
+    fridaApplications: readonly(fridaApplications),
+    pinningSession: readonly(pinningSession),
+    pinningLogs: readonly(pinningLogs),
     caStatus: readonly(caStatus),
     platform: readonly(platform),
     trustState: readonly(trustState),
@@ -451,6 +574,16 @@ export function useNetCat() {
     duplicateMock,
     reorderMocks,
     testMocks,
+    saveScript,
+    deleteScript,
+    setScriptEnabled,
+    testScript,
+    saveNetworkProfile,
+    setActiveNetworkProfile,
+    refreshFrida,
+    loadFridaApplications,
+    startPinningSession,
+    stopPinningSession,
     generateCa,
     trustCa,
     removeCaTrust,

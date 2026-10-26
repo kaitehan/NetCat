@@ -254,6 +254,9 @@ fn har_entry(detail: &TrafficDetail) -> Value {
         },
         "_netcat_mocked": detail.summary.mocked,
         "_netcat_truncated": detail.summary.truncated,
+        "_netcat_appliedScriptIds": detail.summary.applied_script_ids,
+        "_netcat_networkProfileId": detail.summary.network_profile_id,
+        "_netcat_stageTimings": detail.summary.stage_timings,
         "_netcat_error": detail.summary.error
     })
 }

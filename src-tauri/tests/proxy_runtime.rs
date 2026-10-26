@@ -6,8 +6,8 @@ use std::{
 use netcat_lib::{
     ca::{CaManager, SecretStore},
     models::{
-        DiagnosticLog, MatchKind, MockRule, ProxyConfig, ProxyState, ReplayMode, ReplayRequest,
-        TrafficDraft, TrafficSummary,
+        DiagnosticLog, MatchKind, MockRule, ProxyConfig, ProxyScript, ProxyState, ReplayMode,
+        ReplayRequest, ScriptKind, TrafficDraft, TrafficSummary,
     },
     proxy::{ProxyEventSink, ProxyService},
     storage::Store,
@@ -67,6 +67,9 @@ fn replay_source(url: String) -> TrafficDraft {
         mocked: false,
         source_exchange_id: None,
         matched_mock_rule_id: None,
+        applied_script_ids: Vec::new(),
+        network_profile_id: None,
+        stage_timings: Default::default(),
         error: None,
     }
 }
@@ -253,6 +256,65 @@ async fn mock_aware_replay_uses_current_rule_without_running_proxy() {
     assert_eq!(diagnostics.last().unwrap().event, "replay.completed");
 }
 
+#[tokio::test]
+async fn mock_aware_replay_runs_request_scripts_before_mock_matching() {
+    let store = Arc::new(Store::open_in_memory(5000, 1024).unwrap());
+    store
+        .insert_exchange(replay_source("http://unresolvable.invalid/original".into()))
+        .unwrap();
+    store
+        .save_script(&ProxyScript {
+            id: "rewrite".into(),
+            name: "rewrite".into(),
+            enabled: true,
+            priority: 10,
+            methods: vec!["POST".into()],
+            match_kind: MatchKind::Contains,
+            url_pattern: "/original".into(),
+            source: "function onRequest(ctx) { return { url: ctx.url.replace('/original', '/scripted') }; }".into(),
+            kind: ScriptKind::Proxy,
+            platform: None,
+            builtin: false,
+            created_at: "2026-10-26T10:00:00Z".into(),
+        })
+        .unwrap();
+    store
+        .save_mock_rule(&MockRule {
+            id: "scripted-mock".into(),
+            name: "scripted".into(),
+            enabled: true,
+            priority: 1,
+            methods: vec!["POST".into()],
+            match_kind: MatchKind::Exact,
+            url_pattern: "http://unresolvable.invalid/scripted".into(),
+            status: 209,
+            response_headers: BTreeMap::new(),
+            response_body: "scripted".into(),
+            delay_ms: 0,
+            created_at: "2026-10-26T10:00:00Z".into(),
+            hit_count: 0,
+            last_hit_at: None,
+            last_exchange_id: None,
+            source_exchange_id: None,
+        })
+        .unwrap();
+    let service = ProxyService::new(
+        Arc::clone(&store),
+        Arc::new(netcat_lib::platform::NativePortInspector),
+    );
+
+    let result = service
+        .replay("source", ReplayMode::MockAware)
+        .await
+        .unwrap();
+
+    assert!(result.mocked);
+    assert_eq!(result.exchange.status, Some(209));
+    let saved = store.get_traffic_detail(&result.exchange_id).unwrap();
+    assert_eq!(saved.summary.url, "http://unresolvable.invalid/scripted");
+    assert_eq!(saved.response_body, b"scripted");
+}
+
 impl SecretStore for MemorySecrets {
     fn save_private_key(&self, value: &str) -> Result<(), netcat_lib::error::AppError> {
         *self.0.lock().unwrap() = Some(value.to_string());
@@ -359,6 +421,64 @@ async fn proxy_serves_mock_and_persists_exchange() {
         events.diagnostics.lock().unwrap().last().unwrap().event,
         "proxy.stopped"
     );
+}
+
+#[tokio::test]
+async fn live_proxy_can_return_a_synthetic_response_from_a_request_script() {
+    let directory = tempfile::tempdir().unwrap();
+    let ca = CaManager::new(directory.path().to_path_buf(), MemorySecrets::default());
+    ca.generate().unwrap();
+    let store = Arc::new(Store::open_in_memory(5000, 10 * 1024 * 1024).unwrap());
+    store
+        .save_script(&ProxyScript {
+            id: "local-response".into(),
+            name: "local response".into(),
+            enabled: true,
+            priority: 10,
+            methods: vec!["GET".into()],
+            match_kind: MatchKind::Contains,
+            url_pattern: "/script".into(),
+            source: r#"function onRequest() { return { response: { status: 202, headers: { "content-type": "text/plain" }, bodyText: "from-script" } }; }"#.into(),
+            kind: ScriptKind::Proxy,
+            platform: None,
+            builtin: false,
+            created_at: "2026-10-26T10:00:00Z".into(),
+        })
+        .unwrap();
+    let service = ProxyService::new(
+        Arc::clone(&store),
+        Arc::new(netcat_lib::platform::NativePortInspector),
+    );
+    let status = service
+        .start(
+            ProxyConfig {
+                port: 0,
+                allow_lan: false,
+                capture_enabled: true,
+            },
+            ca.load_issuer().unwrap(),
+            std::fs::read(ca.certificate_path()).unwrap(),
+        )
+        .await
+        .unwrap();
+    let client = reqwest::Client::builder()
+        .proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{}", status.port)).unwrap())
+        .build()
+        .unwrap();
+
+    let response = client
+        .get("http://unresolvable.invalid/script")
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 202);
+    assert_eq!(response.text().await.unwrap(), "from-script");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let rows = store.list_traffic(Default::default(), None, 20).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].status, Some(202));
+    service.stop().await.unwrap();
 }
 
 #[tokio::test]

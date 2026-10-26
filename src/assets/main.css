@@ -4,6 +4,14 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --font-size-2xs: 9px;
+  --font-size-xs: 10px;
+  --font-size-sm: 11px;
+  --font-size-md: 12px;
+  --font-size-lg: 13px;
+  --font-size-xl: 15px;
+  --font-size-2xl: 18px;
+  --font-size-3xl: 22px;
   --app-bg: #e7efff;
   --surface: #ffffff;
   --surface-translucent: rgb(255 255 255 / 92%);

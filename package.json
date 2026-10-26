@@ -1,7 +1,7 @@
 {
   "name": "netcat",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.5.0",
   "author": "kaite han",
   "type": "module",
   "scripts": {

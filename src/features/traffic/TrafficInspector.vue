@@ -184,7 +184,7 @@ function formatHex(body: readonly number[]): string {
   flex-direction: column;
   gap: 8px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: var(--font-size-md);
 }
 
 .inspector-empty strong {
@@ -206,14 +206,14 @@ function formatHex(body: readonly number[]): string {
 
 .summary-title strong {
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--font-size-lg);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .method {
   color: var(--accent-strong);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 800;
 }
 
@@ -222,7 +222,7 @@ function formatHex(body: readonly number[]): string {
   overflow: hidden;
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   line-height: 1.45;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -232,7 +232,7 @@ function formatHex(body: readonly number[]): string {
   display: flex;
   gap: 12px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -255,7 +255,7 @@ function formatHex(body: readonly number[]): string {
   background: var(--surface);
   color: var(--text-secondary);
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .summary-header {
@@ -280,7 +280,7 @@ function formatHex(body: readonly number[]): string {
   background: transparent;
   color: var(--text-muted);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
@@ -302,7 +302,7 @@ function formatHex(body: readonly number[]): string {
 .detail-section h3 {
   margin: 0 0 10px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -313,7 +313,7 @@ function formatHex(body: readonly number[]): string {
   grid-template-columns: minmax(90px, 36%) 1fr;
   gap: 7px 10px;
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
@@ -334,7 +334,7 @@ function formatHex(body: readonly number[]): string {
   overflow-wrap: anywhere;
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   line-height: 1.65;
   white-space: pre-wrap;
 }
@@ -348,7 +348,7 @@ function formatHex(body: readonly number[]): string {
   border-left: 2px solid var(--warning);
   background: var(--warning-soft);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .timing-view {
@@ -367,7 +367,7 @@ function formatHex(body: readonly number[]): string {
   margin: 8px 0 0;
   grid-column: 2 / -1;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 

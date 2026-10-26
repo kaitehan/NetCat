@@ -269,14 +269,14 @@ function updateMatchKind(event: Event) {
 
 .editor-header h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--font-size-xl);
   line-height: 1.4;
 }
 
 .editor-header p {
   margin: 3px 0 0;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .editor-body {
@@ -303,7 +303,7 @@ function updateMatchKind(event: Event) {
   flex-direction: column;
   gap: 6px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
@@ -317,7 +317,7 @@ function updateMatchKind(event: Event) {
   background: var(--surface-raised);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-md);
   font-weight: 400;
 }
 
@@ -352,7 +352,7 @@ function updateMatchKind(event: Event) {
   border-left: 2px solid var(--danger);
   background: var(--danger-soft);
   color: var(--danger);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .icon-button,
@@ -365,7 +365,7 @@ function updateMatchKind(event: Event) {
   gap: 6px;
   border-radius: var(--radius-control);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-md);
   font-weight: 600;
 }
 

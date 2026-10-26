@@ -34,6 +34,21 @@ describe('AppSidebar', () => {
     expect(emitted().changeView).toEqual([['settings']])
   })
 
+  it('opens the scripts and SSL Pinning workspaces', async () => {
+    const { emitted } = render(AppSidebar, {
+      props: {
+        activeView: 'traffic',
+        trafficCount: 4,
+        mockCount: 1
+      }
+    })
+
+    await fireEvent.click(screen.getByRole('button', { name: '脚本' }))
+    await fireEvent.click(screen.getByRole('button', { name: 'SSL Pinning' }))
+
+    expect(emitted().changeView).toEqual([['scripts'], ['pinning']])
+  })
+
   it('opens the low-priority About page below settings without a proxy status row', async () => {
     const { emitted } = render(AppSidebar, {
       props: {

@@ -188,13 +188,13 @@ const trustMessage = computed(() => {
 
 .panel-header h2 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--font-size-xl);
 }
 
 .panel-header p {
   margin: 4px 0 0;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .panel-body {
@@ -227,7 +227,7 @@ const trustMessage = computed(() => {
 }
 
 .certificate-status strong {
-  font-size: 12px;
+  font-size: var(--font-size-md);
 }
 
 .certificate-status p {
@@ -235,7 +235,7 @@ const trustMessage = computed(() => {
   overflow-wrap: anywhere;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .instruction-section {
@@ -245,13 +245,13 @@ const trustMessage = computed(() => {
 
 .instruction-section h3 {
   margin: 0 0 10px;
-  font-size: 12px;
+  font-size: var(--font-size-md);
 }
 
 .instruction-section p,
 .instruction-section li {
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   line-height: 1.65;
 }
 
@@ -270,7 +270,7 @@ const trustMessage = computed(() => {
   gap: 5px;
   border-radius: var(--radius-control);
   font-family: inherit;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 600;
 }
 

@@ -172,7 +172,7 @@ function updatePort(event: Event) {
 .panel-heading h2 {
   margin: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-size-lg);
 }
 
 .panel-heading p,
@@ -182,7 +182,7 @@ function updatePort(event: Event) {
 .certificate-copy p {
   margin: 4px 0 0;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
@@ -198,7 +198,7 @@ function updatePort(event: Event) {
 
 .control-row label {
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
@@ -209,7 +209,7 @@ function updatePort(event: Event) {
 
 .port-control span {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 .port-control input {
@@ -221,7 +221,7 @@ function updatePort(event: Event) {
   background: var(--surface-raised);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .port-control input:disabled {
@@ -293,7 +293,7 @@ function updatePort(event: Event) {
 
 .disabled-state p {
   margin: 0;
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .connection-workspace {
@@ -318,7 +318,7 @@ function updatePort(event: Event) {
 .preparation-row strong,
 .certificate-copy strong {
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .status-dot {
@@ -349,7 +349,7 @@ function updatePort(event: Event) {
 .address-row span,
 .certificate-copy > span {
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   font-weight: 600;
 }
 
@@ -358,7 +358,7 @@ function updatePort(event: Event) {
   margin-top: 4px;
   color: var(--accent-strong);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-md);
 }
 
 .preparation-row {
@@ -380,7 +380,7 @@ function updatePort(event: Event) {
   gap: 6px;
   border-radius: var(--radius-control);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
@@ -442,7 +442,7 @@ function updatePort(event: Event) {
 .qr-placeholder span {
   max-width: 100px;
   text-align: center;
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
   line-height: 1.4;
 }
 
@@ -461,7 +461,7 @@ function updatePort(event: Event) {
   overflow-wrap: anywhere;
   color: var(--accent-strong);
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
@@ -486,7 +486,7 @@ function updatePort(event: Event) {
   align-items: center;
   gap: 7px;
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   line-height: 1.4;
 }
 
@@ -500,7 +500,7 @@ function updatePort(event: Event) {
   border-radius: 50%;
   color: var(--accent-strong);
   font-family: var(--font-mono);
-  font-size: 9px;
+  font-size: var(--font-size-2xs);
 }
 
 @media (max-width: 620px) {

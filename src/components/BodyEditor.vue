@@ -204,7 +204,7 @@ onBeforeUnmount(() => {
   justify-content: center;
   background: var(--surface-raised);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   pointer-events: none;
   z-index: 2;
 }
@@ -220,7 +220,7 @@ onBeforeUnmount(() => {
   background: var(--surface-raised);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 12px;
+  font-size: var(--font-size-md);
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

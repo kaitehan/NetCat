@@ -5,7 +5,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::{
     body::decode_body_text,
     error::AppError,
-    models::{MockRule, TrafficDetail, TrafficDraft, TrafficFilter, TrafficSummary},
+    models::{
+        MockRule, NetworkProfile, ProxyScript, TrafficDetail, TrafficDraft, TrafficFilter,
+        TrafficSummary,
+    },
     rules::validate_rule,
 };
 
@@ -60,6 +63,9 @@ impl Store {
                truncated INTEGER NOT NULL,
                source_exchange_id TEXT,
                matched_mock_rule_id TEXT,
+               applied_script_ids TEXT,
+               network_profile_id TEXT,
+               stage_timings TEXT,
                error TEXT
              );
              CREATE INDEX IF NOT EXISTS exchanges_started_at_idx ON exchanges(started_at DESC);
@@ -76,10 +82,24 @@ impl Store {
                last_exchange_id TEXT
              );
              CREATE TABLE IF NOT EXISTS app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS scripts(
+               id TEXT PRIMARY KEY,
+               payload TEXT NOT NULL,
+               priority INTEGER NOT NULL,
+               created_at TEXT NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS network_profiles(
+               id TEXT PRIMARY KEY,
+               payload TEXT NOT NULL,
+               created_at TEXT NOT NULL
+             );
              INSERT OR IGNORE INTO schema_migrations(version) VALUES (2);",
         )?;
         ensure_column(&connection, "exchanges", "source_exchange_id", "TEXT")?;
         ensure_column(&connection, "exchanges", "matched_mock_rule_id", "TEXT")?;
+        ensure_column(&connection, "exchanges", "applied_script_ids", "TEXT")?;
+        ensure_column(&connection, "exchanges", "network_profile_id", "TEXT")?;
+        ensure_column(&connection, "exchanges", "stage_timings", "TEXT")?;
         Ok(Self {
             connection: Mutex::new(connection),
             max_entries: max_entries.max(1),
@@ -114,13 +134,22 @@ impl Store {
                     AppError::new("SERIALIZE_ERROR", "无法保存响应头")
                         .with_detail(error.to_string())
                 })?;
+            let applied_script_ids =
+                serde_json::to_string(&draft.applied_script_ids).map_err(|error| {
+                    AppError::new("SERIALIZE_ERROR", "无法保存脚本执行记录")
+                        .with_detail(error.to_string())
+                })?;
+            let stage_timings = serde_json::to_string(&draft.stage_timings).map_err(|error| {
+                AppError::new("SERIALIZE_ERROR", "无法保存管线耗时").with_detail(error.to_string())
+            })?;
             transaction.execute(
                 "INSERT OR REPLACE INTO exchanges(
                     id, started_at, method, url, host, status, duration_ms,
                     request_headers, response_headers, request_body, response_body,
                     request_original_bytes, response_original_bytes, content_type,
-                    mocked, truncated, source_exchange_id, matched_mock_rule_id, error
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+                    mocked, truncated, source_exchange_id, matched_mock_rule_id,
+                    applied_script_ids, network_profile_id, stage_timings, error
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
                 params![
                     draft.id,
                     draft.started_at,
@@ -140,6 +169,9 @@ impl Store {
                     truncated,
                     draft.source_exchange_id,
                     draft.matched_mock_rule_id,
+                    applied_script_ids,
+                    draft.network_profile_id,
+                    stage_timings,
                     draft.error,
                 ],
             )?;
@@ -164,7 +196,8 @@ impl Store {
         let mut statement = connection.prepare(
             "SELECT id, started_at, method, url, host, status, duration_ms,
                     response_original_bytes, content_type, mocked, truncated,
-                    source_exchange_id, matched_mock_rule_id, error
+                    source_exchange_id, matched_mock_rule_id, error,
+                    applied_script_ids, network_profile_id, stage_timings
              FROM exchanges
              WHERE (?1 IS NULL OR lower(url) LIKE '%' || lower(?1) || '%' OR lower(host) LIKE '%' || lower(?1) || '%')
                AND (?2 IS NULL OR method = ?2)
@@ -199,6 +232,15 @@ impl Store {
                     truncated: row.get(10)?,
                     source_exchange_id: row.get(11)?,
                     matched_mock_rule_id: row.get(12)?,
+                    applied_script_ids: row
+                        .get::<_, Option<String>>(14)?
+                        .and_then(|value| serde_json::from_str(&value).ok())
+                        .unwrap_or_default(),
+                    network_profile_id: row.get(15)?,
+                    stage_timings: row
+                        .get::<_, Option<String>>(16)?
+                        .and_then(|value| serde_json::from_str(&value).ok())
+                        .unwrap_or_default(),
                     error: row.get(13)?,
                 })
             },
@@ -214,7 +256,7 @@ impl Store {
                     response_original_bytes, content_type, mocked, truncated,
                     source_exchange_id, matched_mock_rule_id, error,
                     request_headers, response_headers, request_body, response_body,
-                    request_original_bytes
+                    request_original_bytes, applied_script_ids, network_profile_id, stage_timings
              FROM exchanges WHERE id = ?1",
                 params![id],
                 |row| {
@@ -223,6 +265,15 @@ impl Store {
                     let duration_ms: Option<i64> = row.get(6)?;
                     let response_original_bytes: i64 = row.get(7)?;
                     let request_original_bytes: i64 = row.get(18)?;
+                    let applied_script_ids = row
+                        .get::<_, Option<String>>(19)?
+                        .and_then(|value| serde_json::from_str(&value).ok())
+                        .unwrap_or_default();
+                    let network_profile_id = row.get(20)?;
+                    let stage_timings = row
+                        .get::<_, Option<String>>(21)?
+                        .and_then(|value| serde_json::from_str(&value).ok())
+                        .unwrap_or_default();
                     let request_headers =
                         serde_json::from_str(&request_headers_json).unwrap_or_default();
                     let response_headers =
@@ -244,6 +295,9 @@ impl Store {
                             truncated: row.get(10)?,
                             source_exchange_id: row.get(11)?,
                             matched_mock_rule_id: row.get(12)?,
+                            applied_script_ids,
+                            network_profile_id,
+                            stage_timings,
                             error: row.get(13)?,
                         },
                         request_body_text: decode_body_text(&request_body, &request_headers),
@@ -454,6 +508,151 @@ impl Store {
             .lock()
             .expect("store mutex poisoned")
             .execute("DELETE FROM app_settings WHERE key = ?1", params![key])?;
+        Ok(())
+    }
+
+    pub fn save_script(&self, script: &ProxyScript) -> Result<(), AppError> {
+        validate_identifier(&script.id, "SCRIPT_INVALID_ID", "脚本 ID 不能为空")?;
+        let payload = serde_json::to_string(script).map_err(|error| {
+            AppError::new("SERIALIZE_ERROR", "无法保存脚本").with_detail(error.to_string())
+        })?;
+        self.connection.lock().expect("store mutex poisoned").execute(
+            "INSERT OR REPLACE INTO scripts(id, payload, priority, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![script.id, payload, script.priority, script.created_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_scripts(&self) -> Result<Vec<ProxyScript>, AppError> {
+        let connection = self.connection.lock().expect("store mutex poisoned");
+        list_payloads(
+            &connection,
+            "SELECT payload FROM scripts ORDER BY priority DESC, created_at ASC",
+        )
+    }
+
+    pub fn delete_script(&self, id: &str) -> Result<(), AppError> {
+        self.connection
+            .lock()
+            .expect("store mutex poisoned")
+            .execute("DELETE FROM scripts WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn set_script_enabled(&self, id: &str, enabled: bool) -> Result<(), AppError> {
+        let mut script = self
+            .list_scripts()?
+            .into_iter()
+            .find(|script| script.id == id)
+            .ok_or_else(|| AppError::new("NOT_FOUND", "未找到该脚本"))?;
+        script.enabled = enabled;
+        self.save_script(&script)
+    }
+
+    pub fn reorder_scripts(&self, ordered_ids: &[String]) -> Result<(), AppError> {
+        let scripts = self.list_scripts()?;
+        if ordered_ids.len() != scripts.len()
+            || !ordered_ids
+                .iter()
+                .all(|id| scripts.iter().any(|script| &script.id == id))
+        {
+            return Err(AppError::new(
+                "INVALID_SCRIPT_ORDER",
+                "脚本排序必须包含全部现有脚本",
+            ));
+        }
+        for (index, id) in ordered_ids.iter().enumerate() {
+            let mut script = scripts
+                .iter()
+                .find(|script| &script.id == id)
+                .cloned()
+                .expect("validated script id");
+            script.priority = (ordered_ids.len() - index) as i64;
+            self.save_script(&script)?;
+        }
+        Ok(())
+    }
+
+    pub fn save_network_profile(&self, profile: &NetworkProfile) -> Result<(), AppError> {
+        validate_identifier(
+            &profile.id,
+            "NETWORK_PROFILE_INVALID_ID",
+            "弱网配置 ID 不能为空",
+        )?;
+        if profile.timeout_percent > 100 || profile.disconnect_percent > 100 {
+            return Err(AppError::new(
+                "NETWORK_PROFILE_INVALID_PERCENT",
+                "弱网故障概率必须在 0 到 100 之间",
+            ));
+        }
+        let payload = serde_json::to_string(profile).map_err(|error| {
+            AppError::new("SERIALIZE_ERROR", "无法保存弱网配置").with_detail(error.to_string())
+        })?;
+        self.connection
+            .lock()
+            .expect("store mutex poisoned")
+            .execute(
+            "INSERT OR REPLACE INTO network_profiles(id, payload, created_at) VALUES (?1, ?2, ?3)",
+            params![profile.id, payload, profile.created_at],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_network_profiles(&self) -> Result<Vec<NetworkProfile>, AppError> {
+        let connection = self.connection.lock().expect("store mutex poisoned");
+        list_payloads(
+            &connection,
+            "SELECT payload FROM network_profiles ORDER BY created_at ASC",
+        )
+    }
+
+    pub fn delete_network_profile(&self, id: &str) -> Result<(), AppError> {
+        self.connection
+            .lock()
+            .expect("store mutex poisoned")
+            .execute("DELETE FROM network_profiles WHERE id = ?1", params![id])?;
+        if self.active_network_profile_id()?.as_deref() == Some(id) {
+            self.set_active_network_profile(None)?;
+        }
+        Ok(())
+    }
+
+    pub fn set_active_network_profile(&self, id: Option<&str>) -> Result<(), AppError> {
+        match id {
+            Some(id) => self.set_setting("active_network_profile", id),
+            None => self.delete_setting("active_network_profile"),
+        }
+    }
+
+    pub fn active_network_profile_id(&self) -> Result<Option<String>, AppError> {
+        self.get_setting("active_network_profile")
+    }
+}
+
+fn list_payloads<T: serde::de::DeserializeOwned>(
+    connection: &Connection,
+    query: &str,
+) -> Result<Vec<T>, AppError> {
+    let mut statement = connection.prepare(query)?;
+    let rows = statement.query_map([], |row| row.get::<_, String>(0))?;
+    rows.map(|row| {
+        let payload = row?;
+        serde_json::from_str(&payload).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                payload.len(),
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })
+    })
+    .collect::<Result<Vec<_>, _>>()
+    .map_err(Into::into)
+}
+
+fn validate_identifier(id: &str, code: &str, message: &str) -> Result<(), AppError> {
+    if id.trim().is_empty() {
+        Err(AppError::new(code, message))
+    } else {
         Ok(())
     }
 }

@@ -175,13 +175,13 @@ function submit() {
 }
 
 .replay-header h2 {
-  font-size: 15px;
+  font-size: var(--font-size-xl);
 }
 
 .replay-header p {
   margin-top: 4px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .replay-content {
@@ -205,7 +205,7 @@ function submit() {
   flex-direction: column;
   gap: 6px;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
@@ -220,7 +220,7 @@ function submit() {
   background: var(--surface-raised);
   color: var(--text);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--font-size-md);
 }
 
 .request-line input,
@@ -249,7 +249,7 @@ function submit() {
 .mode-control label,
 .section-title {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .query-section {
@@ -282,7 +282,7 @@ function submit() {
   border-left: 2px solid var(--warning);
   background: var(--warning-soft);
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .form-error {

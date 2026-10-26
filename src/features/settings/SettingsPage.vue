@@ -271,13 +271,13 @@ function updateSystemProxy(event: Event) {
 
 .settings-header h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--font-size-2xl);
 }
 
 .settings-header p {
   margin: 5px 0 16px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .settings-tabs {
@@ -297,7 +297,7 @@ function updateSystemProxy(event: Event) {
   background: transparent;
   color: var(--text-muted);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
@@ -340,13 +340,13 @@ function updateSystemProxy(event: Event) {
 .section-heading h2 {
   margin: 0;
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--font-size-lg);
 }
 
 .section-heading p {
   margin: 4px 0 0;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 .setting-row {
@@ -361,13 +361,13 @@ function updateSystemProxy(event: Event) {
 
 .setting-row label {
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
 .setting-label {
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
@@ -382,7 +382,7 @@ function updateSystemProxy(event: Event) {
   background: var(--accent-soft);
   color: var(--accent-strong);
   font-family: inherit;
-  font-size: 11px;
+  font-size: var(--font-size-sm);
   font-weight: 600;
 }
 
@@ -394,7 +394,7 @@ function updateSystemProxy(event: Event) {
 .setting-row p {
   margin: 5px 0 0;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   line-height: 1.5;
 }
 
@@ -407,7 +407,7 @@ function updateSystemProxy(event: Event) {
   background: var(--surface-raised);
   color: var(--text);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--font-size-sm);
 }
 
 .switch-control {
@@ -474,7 +474,7 @@ function updateSystemProxy(event: Event) {
   border-radius: var(--radius-control);
   background: var(--surface-raised);
   color: var(--text-secondary);
-  font-size: 10px;
+  font-size: var(--font-size-xs);
 }
 
 @media (max-width: 720px) {

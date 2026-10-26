@@ -8,15 +8,19 @@ use crate::{
     diagnostics::build_diagnostic_archive,
     error::AppError,
     export::{build_exchange_copy as create_exchange_copy, build_har},
+    frida::{builtin_injection_scripts, FridaManager},
     migration::migrate_legacy_macos_database,
     models::{
         CaStatus, DiagnosticLevel, DiagnosticLog, DiagnosticScope, MockRule, MockRuleMatch,
-        MockRuleTestResult, ProxyConfig, ProxyStatus, ReplayDraft, ReplayMode, ReplayRequest,
-        ReplayResult, TrafficCopyKind, TrafficDetail, TrafficFilter, TrafficSummary,
+        MockRuleTestResult, NetworkProfile, PinningSessionConfig, PinningSessionStatus,
+        ProxyConfig, ProxyScript, ProxyStatus, ReplayDraft, ReplayMode, ReplayRequest,
+        ReplayResult, ScriptKind, TrafficCopyKind, TrafficDetail, TrafficFilter, TrafficSummary,
     },
+    network::builtin_network_profiles,
     platform::{CertificateTrustDetails, CertificateTrustState, PlatformServices},
     proxy::{ProxyEventSink, ProxyService},
     rules::RuntimeMockRules,
+    script::{validate_script_source, PipelineRequest, ScriptEngine},
     storage::Store,
     system_proxy::SystemProxyManager,
 };
@@ -28,6 +32,7 @@ struct AppState {
     proxy: Arc<ProxyService>,
     ca: CaManager,
     platform: PlatformServices,
+    frida: Arc<FridaManager>,
 }
 
 enum TrustOperation {
@@ -481,6 +486,236 @@ fn test_mock_rules(
     })
 }
 
+fn all_scripts(state: &AppState) -> Result<Vec<ProxyScript>, AppError> {
+    let mut scripts = builtin_injection_scripts();
+    scripts.extend(state.store.list_scripts()?);
+    Ok(scripts)
+}
+
+#[tauri::command]
+fn list_scripts(state: State<'_, AppState>) -> Result<Vec<ProxyScript>, AppError> {
+    all_scripts(&state)
+}
+
+#[tauri::command]
+fn save_script(
+    state: State<'_, AppState>,
+    mut script: ProxyScript,
+) -> Result<ProxyScript, AppError> {
+    if script.builtin {
+        return Err(AppError::new("SCRIPT_READ_ONLY", "内置脚本不能直接修改")
+            .with_action("请复制内置脚本后再编辑"));
+    }
+    validate_script_source(&script.source).map_err(|error| {
+        AppError::new("SCRIPT_SYNTAX_ERROR", "JavaScript 语法校验失败")
+            .with_detail(error)
+            .with_action("请修正编辑器中的语法错误后重试")
+    })?;
+    if script.id.trim().is_empty() {
+        script.id = uuid::Uuid::new_v4().to_string();
+    }
+    if script.created_at.trim().is_empty() {
+        script.created_at = Utc::now().to_rfc3339();
+    }
+    state.store.save_script(&script)?;
+    Ok(script)
+}
+
+#[tauri::command]
+fn delete_script(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+    if id.starts_with("builtin-") {
+        return Err(AppError::new("SCRIPT_READ_ONLY", "内置脚本不能删除"));
+    }
+    state.store.delete_script(&id)
+}
+
+#[tauri::command]
+fn set_script_enabled(
+    state: State<'_, AppState>,
+    id: String,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.store.set_script_enabled(&id, enabled)
+}
+
+#[tauri::command]
+fn reorder_scripts(state: State<'_, AppState>, ordered_ids: Vec<String>) -> Result<(), AppError> {
+    state.store.reorder_scripts(&ordered_ids)
+}
+
+#[tauri::command]
+fn test_proxy_script(
+    script: ProxyScript,
+    method: String,
+    url: String,
+    headers: std::collections::BTreeMap<String, String>,
+    body_text: String,
+) -> serde_json::Value {
+    let mut request = PipelineRequest {
+        method,
+        url,
+        headers,
+        body: body_text.into_bytes(),
+    };
+    let report = ScriptEngine.apply_request(&mut request, &[script]);
+    serde_json::json!({
+        "request": {
+            "method": request.method,
+            "url": request.url,
+            "headers": request.headers,
+            "bodyText": String::from_utf8_lossy(&request.body),
+        },
+        "appliedScriptIds": report.applied_script_ids,
+        "errors": report.errors.into_iter().map(|error| serde_json::json!({
+            "scriptId": error.script_id,
+            "message": error.message,
+        })).collect::<Vec<_>>(),
+        "syntheticResponse": report.synthetic_response.map(|response| serde_json::json!({
+            "status": response.status,
+            "headers": response.headers,
+            "bodyText": String::from_utf8_lossy(&response.body),
+        })),
+    })
+}
+
+#[tauri::command]
+fn list_network_profiles(state: State<'_, AppState>) -> Result<Vec<NetworkProfile>, AppError> {
+    let mut profiles = builtin_network_profiles();
+    profiles.extend(state.store.list_network_profiles()?);
+    Ok(profiles)
+}
+
+#[tauri::command]
+fn save_network_profile(
+    state: State<'_, AppState>,
+    mut profile: NetworkProfile,
+) -> Result<NetworkProfile, AppError> {
+    if profile.builtin {
+        return Err(AppError::new(
+            "NETWORK_PROFILE_READ_ONLY",
+            "内置弱网配置不能修改",
+        ));
+    }
+    if profile.id.trim().is_empty() {
+        profile.id = uuid::Uuid::new_v4().to_string();
+    }
+    if profile.created_at.trim().is_empty() {
+        profile.created_at = Utc::now().to_rfc3339();
+    }
+    state.store.save_network_profile(&profile)?;
+    Ok(profile)
+}
+
+#[tauri::command]
+fn delete_network_profile(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+    if builtin_network_profiles()
+        .iter()
+        .any(|profile| profile.id == id)
+    {
+        return Err(AppError::new(
+            "NETWORK_PROFILE_READ_ONLY",
+            "内置弱网配置不能删除",
+        ));
+    }
+    state.store.delete_network_profile(&id)
+}
+
+#[tauri::command]
+fn get_active_network_profile(state: State<'_, AppState>) -> Result<Option<String>, AppError> {
+    state.store.active_network_profile_id()
+}
+
+#[tauri::command]
+fn set_active_network_profile(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    id: Option<String>,
+) -> Result<(), AppError> {
+    if let Some(id) = id.as_deref() {
+        let exists = builtin_network_profiles()
+            .iter()
+            .any(|profile| profile.id == id)
+            || state
+                .store
+                .list_network_profiles()?
+                .iter()
+                .any(|profile| profile.id == id);
+        if !exists {
+            return Err(AppError::new("NOT_FOUND", "未找到该弱网配置"));
+        }
+    }
+    state.store.set_active_network_profile(id.as_deref())?;
+    let _ = app.emit("network-profile-changed", &id);
+    Ok(())
+}
+
+#[tauri::command]
+fn get_frida_environment(state: State<'_, AppState>) -> crate::models::FridaEnvironmentStatus {
+    state.frida.environment()
+}
+
+#[tauri::command]
+fn list_frida_devices(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::models::FridaDevice>, AppError> {
+    state.frida.devices()
+}
+
+#[tauri::command]
+fn list_frida_applications(
+    state: State<'_, AppState>,
+    device_id: String,
+) -> Result<Vec<crate::models::FridaApplication>, AppError> {
+    state.frida.applications(&device_id)
+}
+
+#[tauri::command]
+fn get_pinning_session_status(state: State<'_, AppState>) -> PinningSessionStatus {
+    state.frida.status()
+}
+
+#[tauri::command]
+fn start_pinning_session(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    config: PinningSessionConfig,
+) -> Result<PinningSessionStatus, AppError> {
+    let scripts = all_scripts(&state)?;
+    let selected = config
+        .script_ids
+        .iter()
+        .filter_map(|id| scripts.iter().find(|script| &script.id == id))
+        .filter(|script| script.kind == ScriptKind::Injection)
+        .map(|script| script.source.as_str())
+        .collect::<Vec<_>>();
+    if selected.is_empty() {
+        return Err(AppError::new(
+            "FRIDA_SCRIPT_REQUIRED",
+            "请至少选择一个注入脚本",
+        ));
+    }
+    let log_app = app.clone();
+    let status = state.frida.start(
+        &config,
+        &selected.join("\n\n"),
+        Arc::new(move |line| {
+            let _ = log_app.emit("pinning-log", line);
+        }),
+    )?;
+    let _ = app.emit("pinning-session-changed", &status);
+    Ok(status)
+}
+
+#[tauri::command]
+fn stop_pinning_session(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<PinningSessionStatus, AppError> {
+    let status = state.frida.stop()?;
+    let _ = app.emit("pinning-session-changed", &status);
+    Ok(status)
+}
+
 #[tauri::command]
 fn export_har(state: State<'_, AppState>, destination: String) -> Result<(), AppError> {
     let har = build_har(&state.store.list_all_details()?)?;
@@ -621,11 +856,13 @@ pub fn run() {
                 platform.secrets.clone(),
             );
             initialize_migrated_ca(migrated_from_netcapture, &ca);
+            let frida = Arc::new(FridaManager::new(data_directory.join("frida")));
             app.manage(AppState {
                 store,
                 proxy,
                 ca,
                 platform,
+                frida,
             });
             Ok(())
         })
@@ -659,6 +896,23 @@ pub fn run() {
             duplicate_mock_rule,
             reorder_mock_rules,
             test_mock_rules,
+            list_scripts,
+            save_script,
+            delete_script,
+            set_script_enabled,
+            reorder_scripts,
+            test_proxy_script,
+            list_network_profiles,
+            save_network_profile,
+            delete_network_profile,
+            get_active_network_profile,
+            set_active_network_profile,
+            get_frida_environment,
+            list_frida_devices,
+            list_frida_applications,
+            get_pinning_session_status,
+            start_pinning_session,
+            stop_pinning_session,
             export_har,
             build_exchange_copy,
             replay_exchange,
@@ -674,6 +928,7 @@ pub fn run() {
     application.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::Exit) {
             if let Some(state) = app_handle.try_state::<AppState>() {
+                let _ = state.frida.stop();
                 tauri::async_runtime::block_on(async {
                     let _ = state.proxy.stop().await;
                 });
@@ -768,6 +1023,7 @@ mod tests {
         AppState {
             ca: CaManager::new(directory.to_path_buf(), platform.secrets.clone()),
             proxy: Arc::new(ProxyService::new(store.clone(), platform.ports.clone())),
+            frida: Arc::new(FridaManager::new(directory.join("frida"))),
             store,
             platform,
         }
