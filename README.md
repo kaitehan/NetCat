@@ -1,25 +1,48 @@
 # NetCat（奈特猫）
 
-> 本地守候每一次请求
+[简体中文](README.md) | [English](README.en.md)
 
-NetCat（奈特猫）是一款面向开发者的本地 HTTP/HTTPS 抓包与 Mock 工具，可查看请求与响应、筛选流量、重放请求、构造 Mock，并管理本地 CA 与系统代理。流量、规则与设置默认只保存在本机。
+> 本地守候每一次请求。
 
-支持平台为 macOS 12+、Windows 10 22H2 和 Windows 11（Windows 仅提供 x86_64 MSVC 构建）。界面使用 Vue 3，桌面壳与代理运行时使用 Tauri 2 和 Rust。应用由 kaite han 开发。
+NetCat（奈特猫）是一款面向开发者的本地 HTTP/HTTPS 调试代理。它提供流量捕获与筛选、请求编辑重放、Mock 规则、HAR 导出、cURL 复制、系统代理管理和本地 CA 管理，帮助开发者在一个桌面应用中完成接口分析、问题复现与响应模拟。
+
+NetCat 基于 Vue 3、Tauri 2 和 Rust 构建。请求记录、Mock 规则和应用设置默认保存在本机，不依赖账号、云服务、遥测或远程数据上传。
+
+> A local-first HTTP/HTTPS debugging proxy with traffic inspection, request replay, mocking, system proxy integration, and local CA management.
+
+NetCat 与传统的 `netcat` / `nc` 命令行网络工具没有关联。本项目聚焦桌面端 HTTP/HTTPS 接口调试。
 
 > 仅可捕获您拥有或已明确获准测试的设备、应用和网络。不要将本工具用于未授权的流量拦截、凭据收集或隐私数据访问。
 
-## MVP 能力
+## 核心能力
 
 - 本机 HTTP/1.1 与 HTTPS CONNECT 代理，默认监听 `127.0.0.1:28086`
 - 用户主动开启的局域网模式，仅接受私有网络来源
 - HTTPS 动态叶子证书与本地根 CA；macOS 私钥保存在钥匙串，Windows 私钥使用当前用户 DPAPI 加密保存
-- 精确、包含、正则 URL Mock，支持方法、优先级、状态码、Header、正文和延迟
+- 请求编辑与重放，支持 GET、POST、JSON、表单和二进制正文
+- 精确、包含、正则 URL Mock，支持方法、优先级、状态码、Header、正文、延迟、匹配测试和命中统计
 - SQLite 持久化、5000 条滚动上限、单向正文 10 MB 截断
 - 关键词、方法、状态码和域名过滤，Request/Response/Timing 详情
 - HAR 1.2 导出和可执行 cURL 复制
 - macOS 当前网络服务、Windows 当前用户的 HTTP/HTTPS 系统代理设置与恢复
 
 当前版本不解析 HTTP/2、QUIC、WebSocket 帧或非 HTTP TCP。开启证书固定的应用可能无法被解密。
+
+## 技术栈
+
+- Vue 3、TypeScript、Vite 和 Monaco Editor
+- Tauri 2 与 Rust
+- SQLite 本地持久化
+- Vitest、Vue Testing Library 与 Rust 测试套件
+
+## 平台状态
+
+| 平台 | 状态 | 说明 |
+| --- | --- | --- |
+| macOS 12+ | 主要支持 | 已实现系统代理、钥匙串私钥以及 `.app` / DMG 打包 |
+| Windows 10 22H2 / Windows 11 | 实验性支持 | 仅支持 x86_64 MSVC；已实现当前用户代理、DPAPI 私钥、证书信任与 NSIS 构建配置，仍需完成 Windows 实机验收 |
+
+项目当前处于内部开发阶段，不建议直接用于生产环境或未受控网络。
 
 ## 开发环境
 
@@ -175,3 +198,13 @@ security delete-generic-password -s com.kaitehan.netcat -a root-ca-private-key
 - SSL Pinning 绕过、JavaScript 脚本系统和弱网模拟。
 - 自动更新、macOS 签名与公证，以及公开分发所需的合规工作。
 - 基础断点改包仍受性能和稳定性门禁约束；若未通过 0.3.0 门禁，则作为后续版本候选，不视为 0.3.0 已交付能力。
+
+## 参与贡献
+
+欢迎提交缺陷报告、功能建议、文档改进和代码贡献。开始前请阅读 [贡献指南](CONTRIBUTING.md)；安全问题请按照 [安全策略](SECURITY.md) 私下报告，不要在公开 Issue 中披露漏洞细节。
+
+建议为仓库配置以下 GitHub Topics：`http-proxy`、`https-proxy`、`network-debugging`、`api-testing`、`mock-server`、`request-replay`、`tauri`、`rust`、`vue`、`developer-tools`、`macos`、`windows`。
+
+## 许可证
+
+项目许可证尚待维护者确认。在许可证文件加入仓库之前，源代码默认仍受著作权保护，不代表已授权复制、修改或分发。
