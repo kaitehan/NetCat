@@ -184,6 +184,28 @@ describe('App', () => {
     expect(api.installCaTrust).not.toHaveBeenCalled()
   })
 
+  it('recovers a missing private key after explicitly removing trust and regenerating the CA', async () => {
+    const api = windowsApi()
+    vi.mocked(api.getCertificateTrustDetails)
+      .mockResolvedValueOnce({ publicTrust: 'trusted', privateKeyState: 'missing' })
+      .mockResolvedValueOnce({ publicTrust: 'notTrusted', privateKeyState: 'missing' })
+      .mockResolvedValue({ publicTrust: 'notTrusted', privateKeyState: 'ready' })
+    api.generateCa = vi.fn().mockResolvedValue({ generated: true, certificatePath: 'C:\\NetCat\\ca.crt', fingerprint: 'CC' })
+    renderWithApi(api)
+
+    await fireEvent.click(screen.getByRole('button', { name: '设置' }))
+    await fireEvent.click(await screen.findByRole('tab', { name: '证书配置' }))
+    expect(screen.queryByRole('button', { name: '重新生成证书' })).not.toBeInTheDocument()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '移除信任' }))
+    const regenerate = await screen.findByRole('button', { name: '重新生成证书' })
+    await fireEvent.click(regenerate)
+
+    await waitFor(() => expect(api.generateCa).toHaveBeenCalledOnce())
+    expect(await screen.findByText('CA 私钥已就绪')).toBeVisible()
+    expect(api.installCaTrust).not.toHaveBeenCalled()
+  })
+
   it('shows pending proxy recovery and refreshes ownership after recovery', async () => {
     const api = windowsApi()
     vi.mocked(api.getSystemProxyStatus)

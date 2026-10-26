@@ -25,12 +25,19 @@ const emit = defineEmits<{
 }>()
 
 const trustSupported = computed(() => platform?.os === 'windows' && platform.certificateTrustSupported && trustState !== 'unsupported')
-const privateKeyMessage = computed(() => ({
-  ready: 'CA 私钥已就绪',
-  missing: 'CA 私钥缺失，请重新生成本地 CA。',
-  mismatch: 'CA 私钥与公钥证书不匹配，请重新生成本地 CA。',
-  unavailable: 'CA 私钥不可用，请检查私钥访问权限。'
-})[privateKeyState])
+const canRegenerate = computed(() => platform?.os === 'windows' && caStatus.generated &&
+  trustState !== 'trusted' && (privateKeyState === 'missing' || privateKeyState === 'mismatch'))
+const privateKeyMessage = computed(() => {
+  if (trustState === 'trusted' && (privateKeyState === 'missing' || privateKeyState === 'mismatch')) {
+    return 'CA 私钥缺失或不匹配，请先移除当前 CA 信任，再重新生成本地 CA。'
+  }
+  return ({
+    ready: 'CA 私钥已就绪',
+    missing: 'CA 私钥缺失，请重新生成本地 CA。',
+    mismatch: 'CA 私钥与公钥证书不匹配，请重新生成本地 CA。',
+    unavailable: 'CA 私钥不可用，请检查私钥访问权限。'
+  })[privateKeyState]
+})
 const trustMessage = computed(() => {
   if (!trustSupported.value) {
     return '当前环境不支持自动管理证书信任，请导出证书并手动安装。'
@@ -130,6 +137,15 @@ const healthUrl = computed(() => certificateUrl.value?.replace('/__netcat/ca.crt
             @click="emit('removeTrust')"
           >
             移除信任
+          </button>
+          <button
+            v-if="canRegenerate"
+            type="button"
+            class="primary-button"
+            :disabled="busy"
+            @click="emit('generate')"
+          >
+            重新生成证书
           </button>
         </section>
 

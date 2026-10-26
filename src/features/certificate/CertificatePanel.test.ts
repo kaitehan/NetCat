@@ -14,6 +14,7 @@ describe('CertificatePanel', () => {
     expect(screen.getByText(/CA 私钥/)).toBeVisible()
     expect(screen.getByRole('button', { name: '移除信任' })).toBeEnabled()
     expect(screen.queryByRole('button', { name: '安装信任' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '重新生成证书' })).not.toBeInTheDocument()
   })
 
   it.each(['missing', 'mismatch', 'unavailable'] as const)('never offers trust mutation for an untrusted public certificate with a %s private key', (privateKeyState) => {
@@ -21,6 +22,15 @@ describe('CertificatePanel', () => {
     expect(screen.getByText('当前 CA 尚未信任')).toBeVisible()
     expect(screen.queryByRole('button', { name: '移除信任' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '安装信任' })).not.toBeInTheDocument()
+  })
+
+  it.each(['missing', 'mismatch'] as const)('offers CA regeneration when the public certificate is untrusted and the private key is %s', async (privateKeyState) => {
+    const { emitted } = render(CertificatePanel, { props: { ...windowsProps, privateKeyState } })
+
+    const regenerate = screen.getByRole('button', { name: '重新生成证书' })
+    expect(regenerate).toBeEnabled()
+    await fireEvent.click(regenerate)
+    expect(emitted().generate).toHaveLength(1)
   })
 
   it('shows neutral unavailable platform copy until platform information is ready', () => {
