@@ -1,35 +1,17 @@
 <script setup lang="ts">
-import { Braces, FlaskConical, Network, Settings } from '@lucide/vue'
-import { computed } from 'vue'
+import { Braces, FlaskConical, Info, Network, Settings } from '@lucide/vue'
 import appIcon from '../../src-tauri/icons/icon.png'
 import { APP_BRAND } from '../shared/brand'
-import type { ProxyStatus } from '../shared/types'
 
-const { activeView, trafficCount, mockCount, proxyStatus } = defineProps<{
-  activeView: 'traffic' | 'mocks' | 'settings'
+const { activeView, trafficCount, mockCount } = defineProps<{
+  activeView: 'traffic' | 'mocks' | 'settings' | 'about'
   trafficCount: number
   mockCount: number
-  proxyStatus: ProxyStatus
 }>()
 
 const emit = defineEmits<{
-  changeView: [view: 'traffic' | 'mocks' | 'settings']
+  changeView: [view: 'traffic' | 'mocks' | 'settings' | 'about']
 }>()
-
-const statusLabel = computed(() => {
-  switch (proxyStatus.state) {
-    case 'running':
-      return '捕获中'
-    case 'starting':
-      return '启动中'
-    case 'stopping':
-      return '停止中'
-    case 'error':
-      return '代理异常'
-    default:
-      return '就绪'
-  }
-})
 </script>
 
 <template>
@@ -81,10 +63,17 @@ const statusLabel = computed(() => {
         <Settings :size="15" />
         <span>设置</span>
       </button>
-      <div class="sidebar-status" :class="`state-${proxyStatus.state}`" aria-label="代理状态">
-        <i aria-hidden="true" />
-        <span>{{ statusLabel }}</span>
-      </div>
+      <button
+        type="button"
+        class="about-row"
+        :class="{ active: activeView === 'about' }"
+        aria-label="关于"
+        :title="`关于 ${APP_BRAND.name}`"
+        @click="emit('changeView', 'about')"
+      >
+        <Info :size="13" />
+        <span>关于</span>
+      </button>
     </div>
   </aside>
 </template>
@@ -201,34 +190,30 @@ const statusLabel = computed(() => {
 .sidebar-footer {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 2px;
 }
 
-.sidebar-status {
-  display: flex;
-  height: 10px;
+.about-row {
+  display: grid;
+  width: 100%;
+  height: 26px;
   padding: 0 9px;
+  grid-template-columns: 20px 1fr;
   align-items: center;
   gap: 6px;
+  border: 0;
+  background: transparent;
   color: var(--sidebar-muted);
+  font-family: inherit;
   font-size: 9px;
-  line-height: 10px;
+  text-align: left;
+  opacity: 0.78;
 }
 
-.sidebar-status i {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.sidebar-status.state-running {
-  color: var(--mock);
-}
-
-.sidebar-status.state-error {
-  color: var(--danger);
+.about-row:hover,
+.about-row.active {
+  color: var(--accent-strong);
+  opacity: 1;
 }
 
 .settings-row:hover:not(.active) {
@@ -253,12 +238,13 @@ const statusLabel = computed(() => {
   .navigation b,
   .sidebar-note p,
   .settings-row span,
-  .sidebar-status span {
+  .about-row span {
     display: none;
   }
 
   .navigation button,
-  .settings-row {
+  .settings-row,
+  .about-row {
     padding: 0;
     grid-template-columns: 1fr;
     place-items: center;
@@ -267,11 +253,6 @@ const statusLabel = computed(() => {
   .sidebar-note {
     padding-right: 0;
     padding-left: 0;
-    justify-content: center;
-  }
-
-  .sidebar-status {
-    padding: 0;
     justify-content: center;
   }
 }

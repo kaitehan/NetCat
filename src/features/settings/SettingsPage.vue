@@ -1,7 +1,6 @@
 <script setup lang="ts">
-import { Bug, Download, Info, Laptop, Pause, Router, Settings2, ShieldCheck } from '@lucide/vue'
+import { Bug, Download, Laptop, Pause, Router, Settings2, ShieldCheck } from '@lucide/vue'
 import { computed, shallowRef } from 'vue'
-import { APP_BRAND } from '../../shared/brand'
 import type { CaStatus, CaPrivateKeyState, CertificateTrustState, PlatformInfo, ProxyStatus, SystemProxyStatus } from '../../shared/types'
 import CertificatePanel from '../certificate/CertificatePanel.vue'
 import MobileConnectionPanel from './MobileConnectionPanel.vue'
@@ -247,26 +246,6 @@ function updateSystemProxy(event: Event) {
         </div>
       </section>
 
-      <section class="settings-section about-section">
-        <div class="section-heading">
-          <Info :size="17" />
-          <div>
-            <h2>关于 {{ APP_BRAND.name }}</h2>
-            <p>{{ APP_BRAND.chineseName }} · {{ APP_BRAND.tagline }}</p>
-          </div>
-        </div>
-        <p class="about-description">{{ APP_BRAND.description }}</p>
-        <dl class="about-meta">
-          <div>
-            <dt>版本</dt>
-            <dd>{{ APP_BRAND.version }}</dd>
-          </div>
-          <div>
-            <dt>作者</dt>
-            <dd>{{ APP_BRAND.author }}</dd>
-          </div>
-        </dl>
-      </section>
     </div>
   </section>
 </template>
@@ -348,41 +327,6 @@ function updateSystemProxy(event: Event) {
 
 .mobile-panel + .settings-section {
   margin-top: 22px;
-}
-
-.about-section {
-  padding-bottom: 18px;
-}
-
-.about-description {
-  max-width: 620px;
-  margin: 2px 0 14px;
-  color: var(--text-secondary);
-  font-size: 11px;
-  line-height: 1.7;
-}
-
-.about-meta {
-  display: flex;
-  margin: 0;
-  gap: 28px;
-}
-
-.about-meta div {
-  display: grid;
-  grid-template-columns: auto auto;
-  gap: 8px;
-  font-size: 10px;
-}
-
-.about-meta dt {
-  color: var(--text-muted);
-}
-
-.about-meta dd {
-  margin: 0;
-  color: var(--text);
-  font-family: var(--font-mono);
 }
 
 .section-heading {

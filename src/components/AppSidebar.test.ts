@@ -2,22 +2,13 @@ import { fireEvent, render, screen } from '@testing-library/vue'
 import { describe, expect, it } from 'vitest'
 import AppSidebar from './AppSidebar.vue'
 
-const stoppedStatus = {
-  state: 'stopped' as const,
-  bindAddress: null,
-  port: 28086,
-  lanIp: null,
-  error: null
-}
-
 describe('AppSidebar', () => {
   it('shows the PNG application icon in the brand area', () => {
     render(AppSidebar, {
       props: {
         activeView: 'traffic',
         trafficCount: 4,
-        mockCount: 1,
-        proxyStatus: stoppedStatus
+        mockCount: 1
       }
     })
 
@@ -34,8 +25,7 @@ describe('AppSidebar', () => {
       props: {
         activeView: 'traffic',
         trafficCount: 4,
-        mockCount: 1,
-        proxyStatus: stoppedStatus
+        mockCount: 1
       }
     })
 
@@ -44,20 +34,39 @@ describe('AppSidebar', () => {
     expect(emitted().changeView).toEqual([['settings']])
   })
 
-  it('shows proxy readiness below the settings action', () => {
-    render(AppSidebar, {
+  it('opens the low-priority About page below settings without a proxy status row', async () => {
+    const { emitted } = render(AppSidebar, {
       props: {
-        activeView: 'settings',
+        activeView: 'about',
         trafficCount: 4,
-        mockCount: 1,
-        proxyStatus: stoppedStatus
+        mockCount: 1
       }
     })
 
     const settings = screen.getByRole('button', { name: '设置' })
-    const status = screen.getByText('就绪')
+    const about = screen.getByRole('button', { name: '关于' })
 
-    expect(settings.compareDocumentPosition(status) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(status.closest('.sidebar-status')).not.toBeNull()
+    expect(settings.compareDocumentPosition(about) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(about).toHaveClass('active')
+    expect(screen.queryByLabelText('代理状态')).not.toBeInTheDocument()
+    expect(screen.queryByText('就绪')).not.toBeInTheDocument()
+
+    await fireEvent.click(about)
+    expect(emitted().changeView).toEqual([['about']])
+  })
+
+  it('keeps settings above the About action', () => {
+    render(AppSidebar, {
+      props: {
+        activeView: 'settings',
+        trafficCount: 4,
+        mockCount: 1
+      }
+    })
+
+    const settings = screen.getByRole('button', { name: '设置' })
+    const about = screen.getByRole('button', { name: '关于' })
+
+    expect(settings.compareDocumentPosition(about) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })

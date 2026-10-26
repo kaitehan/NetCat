@@ -343,6 +343,19 @@ describe('App', () => {
     expect(screen.getByText('本地 CA 已就绪')).toBeVisible()
   })
 
+  it('opens About as a standalone app view without the business toolbar', async () => {
+    const api = windowsApi()
+    renderWithApi(api)
+
+    expect(await screen.findByRole('button', { name: '启动代理' })).toBeVisible()
+    await fireEvent.click(screen.getByRole('button', { name: '关于' }))
+
+    expect(await screen.findByRole('heading', { name: '关于 NetCat' })).toBeVisible()
+    expect(screen.getByText('奈特猫 · 本地守候每一次请求')).toBeVisible()
+    expect(screen.queryByRole('button', { name: '启动代理' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '设置' })).not.toBeInTheDocument()
+  })
+
   it('hides a URL for the session and creates a focused Mock draft from its response', async () => {
     const detail: TrafficDetail = {
       ...row,

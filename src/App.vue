@@ -26,12 +26,13 @@ import type {
 const MockEditor = defineAsyncComponent(() => import('./features/mock/MockEditor.vue'))
 const MockRulesPanel = defineAsyncComponent(() => import('./features/mock/MockRulesPanel.vue'))
 const SettingsPage = defineAsyncComponent(() => import('./features/settings/SettingsPage.vue'))
+const AboutPage = defineAsyncComponent(() => import('./features/about/AboutPage.vue'))
 const DiagnosticPanel = defineAsyncComponent(() => import('./features/diagnostics/DiagnosticPanel.vue'))
 const TrafficInspector = defineAsyncComponent(() => import('./features/traffic/TrafficInspector.vue'))
 const ReplayEditor = defineAsyncComponent(() => import('./features/replay/ReplayEditor.vue'))
 
 const capture = useNetCat()
-const activeView = shallowRef<'traffic' | 'mocks' | 'settings'>('traffic')
+const activeView = shallowRef<'traffic' | 'mocks' | 'settings' | 'about'>('traffic')
 const mockEditorOpen = shallowRef(false)
 const replayEditorOpen = shallowRef(false)
 const replayDraft = shallowRef<ReplayDraft | null>(null)
@@ -324,17 +325,16 @@ onMounted(() => void capture.initialize())
 
 <template>
   <div class="app-frame" :class="{ 'diagnostics-open': diagnosticsOpen }">
-    <div class="app-shell" :class="{ 'settings-active': activeView === 'settings' }">
+    <div class="app-shell" :class="{ 'settings-active': activeView === 'settings' || activeView === 'about' }">
     <AppSidebar
       :active-view="activeView"
       :traffic-count="capture.traffic.value.length"
       :mock-count="capture.mockRules.value.length"
-      :proxy-status="capture.proxyStatus.value"
       @change-view="activeView = $event"
     />
 
     <TopToolbar
-      v-if="activeView !== 'settings'"
+      v-if="activeView === 'traffic' || activeView === 'mocks'"
       :status="capture.proxyStatus.value"
       :busy="capture.busy.value"
       @toggle-proxy="capture.toggleProxy"
@@ -342,8 +342,8 @@ onMounted(() => void capture.initialize())
       @export="exportHar"
     />
 
-    <div class="app-body" :class="{ 'settings-layout': activeView === 'settings' }">
-      <main class="workspace" :class="{ 'settings-workspace': activeView === 'settings' }">
+    <div class="app-body" :class="{ 'settings-layout': activeView === 'settings' || activeView === 'about' }">
+      <main class="workspace" :class="{ 'settings-workspace': activeView === 'settings' || activeView === 'about' }">
         <template v-if="activeView === 'traffic'">
           <div class="filter-bar">
             <label class="search-control">
@@ -389,7 +389,7 @@ onMounted(() => void capture.initialize())
           @test="testMocks"
         />
         <SettingsPage
-          v-else
+          v-else-if="activeView === 'settings'"
           :platform="capture.platform.value"
           :trust-state="capture.trustState.value"
           :private-key-state="capture.privateKeyState.value"
@@ -416,6 +416,7 @@ onMounted(() => void capture.initialize())
           @open-diagnostics="diagnosticsOpen = true"
           @export-diagnostics="exportDiagnostics"
         />
+        <AboutPage v-else />
       </main>
 
       <TrafficInspector
