@@ -17,6 +17,10 @@ use crate::{
     },
     network::builtin_network_profiles,
     pairing::{PairingEventSink, PairingService},
+    pet::{
+        load_pet_preferences, save_pet_placement as persist_pet_placement,
+        set_pet_enabled as persist_pet_enabled, PetPlacement, PetPreferences,
+    },
     platform::{CertificateTrustDetails, CertificateTrustState, PlatformServices},
     proxy::{ProxyEventSink, ProxyService},
     rules::RuntimeMockRules,
@@ -819,6 +823,42 @@ fn accept_disclaimer(state: State<'_, AppState>) -> Result<(), AppError> {
 }
 
 #[tauri::command]
+fn get_pet_preferences(state: State<'_, AppState>) -> Result<PetPreferences, AppError> {
+    load_pet_preferences(&state.store)
+}
+
+#[tauri::command]
+fn set_pet_enabled(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<PetPreferences, AppError> {
+    let window = app.get_webview_window("pet").ok_or_else(|| {
+        AppError::new("PET_WINDOW_NOT_FOUND", "无法找到桌面小橘窗口")
+            .with_action("请重启应用后重试")
+    })?;
+    let preferences = persist_pet_enabled(&state.store, enabled)?;
+    if enabled {
+        window.show().map_err(|error| {
+            AppError::new("PET_WINDOW_ERROR", "无法显示桌面小橘").with_detail(error.to_string())
+        })?;
+    } else {
+        window.hide().map_err(|error| {
+            AppError::new("PET_WINDOW_ERROR", "无法隐藏桌面小橘").with_detail(error.to_string())
+        })?;
+    }
+    Ok(preferences)
+}
+
+#[tauri::command]
+fn save_pet_placement(
+    state: State<'_, AppState>,
+    placement: PetPlacement,
+) -> Result<PetPreferences, AppError> {
+    persist_pet_placement(&state.store, placement)
+}
+
+#[tauri::command]
 fn open_devtools(app: tauri::AppHandle) -> Result<(), AppError> {
     let window = app.get_webview_window("main").ok_or_else(|| {
         AppError::new("DEVTOOLS_WINDOW_NOT_FOUND", "无法找到应用主窗口")
@@ -936,6 +976,9 @@ pub fn run() {
             send_replay,
             has_accepted_disclaimer,
             accept_disclaimer,
+            get_pet_preferences,
+            set_pet_enabled,
+            save_pet_placement,
             open_devtools,
         ])
         .build(tauri::generate_context!())

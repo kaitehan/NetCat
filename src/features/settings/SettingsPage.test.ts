@@ -25,6 +25,7 @@ const props = {
   captureEnabled: true,
   systemProxyPreferred: true,
   systemProxyEnabled: false,
+  desktopPetEnabled: true,
   caStatus: {
     generated: true,
     certificatePath: '/tmp/netcat-ca.crt',
@@ -148,6 +149,20 @@ describe('SettingsPage', () => {
     expect(emitted().openDiagnostics).toHaveLength(1)
     await fireEvent.click(screen.getByRole('button', { name: '导出诊断包' }))
     expect(emitted().exportDiagnostics).toHaveLength(1)
+  })
+
+  it('shows the desktop pet preference and requests visibility changes', async () => {
+    const { emitted, rerender } = render(SettingsPage, { props })
+
+    await fireEvent.click(screen.getByRole('tab', { name: '系统配置' }))
+    const checkbox = screen.getByRole('checkbox', { name: '显示桌面小橘' })
+    expect(checkbox).toBeChecked()
+
+    await fireEvent.click(checkbox)
+    expect(emitted().updateDesktopPet).toEqual([[false]])
+
+    await rerender({ ...props, desktopPetEnabled: false })
+    expect(checkbox).not.toBeChecked()
   })
 
   it('keeps About content out of system settings', async () => {

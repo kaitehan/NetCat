@@ -1,6 +1,19 @@
 export type ProxyState = 'stopped' | 'starting' | 'running' | 'stopping' | 'error'
 export type ProxyMode = 'computer' | 'mobile'
 export type TrafficOrigin = 'computer' | 'mobile' | 'replay'
+export type PetEdge = 'top' | 'right' | 'bottom' | 'left'
+
+export interface PetPlacement {
+  monitorName: string | null
+  edge: PetEdge
+  offset: number
+}
+
+export interface PetPreferences {
+  version: 1
+  enabled: boolean
+  placement: PetPlacement | null
+}
 
 export interface PlatformInfo {
   os: 'windows' | 'macos'

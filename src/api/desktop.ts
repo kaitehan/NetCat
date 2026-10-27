@@ -14,6 +14,8 @@ import type {
   NetworkProfile,
   PlatformInfo,
   PairedDevice,
+  PetPlacement,
+  PetPreferences,
   PairingChallenge,
   ProxyConfig,
   ProxyStatus,
@@ -93,6 +95,9 @@ export interface DesktopApi {
   getReplayDraft?(id: string): Promise<ReplayDraft>
   sendReplay?(request: ReplayRequest): Promise<ReplayResult>
   hasAcceptedDisclaimer(): Promise<boolean>
+  getPetPreferences(): Promise<PetPreferences>
+  setPetEnabled(enabled: boolean): Promise<PetPreferences>
+  savePetPlacement(placement: PetPlacement): Promise<PetPreferences>
   acceptDisclaimer(): Promise<void>
   openDevtools(): Promise<void>
   listen<T>(event: DesktopEvent, handler: (payload: T) => void): Promise<UnlistenFn>
@@ -201,6 +206,7 @@ let browserStatus: ProxyStatus = {
 }
 
 let browserPairingIdleTimeout = 15
+let browserPetPreferences: PetPreferences = { version: 1, enabled: true, placement: null }
 const browserPairedDevices: PairedDevice[] = [{
   deviceToken: 'preview-phone-online',
   name: '测试手机',
@@ -494,6 +500,17 @@ const browserApi: DesktopApi = {
   async hasAcceptedDisclaimer() {
     return localStorage.getItem('netcat-disclaimer') === 'accepted'
   },
+  async getPetPreferences() {
+    return browserPetPreferences
+  },
+  async setPetEnabled(enabled) {
+    browserPetPreferences = { ...browserPetPreferences, enabled }
+    return browserPetPreferences
+  },
+  async savePetPlacement(placement) {
+    browserPetPreferences = { ...browserPetPreferences, placement }
+    return browserPetPreferences
+  },
   async acceptDisclaimer() {
     localStorage.setItem('netcat-disclaimer', 'accepted')
   },
@@ -585,6 +602,9 @@ const tauriApi: DesktopApi = {
   getReplayDraft: (id) => invoke('get_replay_draft', { exchangeId: id }),
   sendReplay: (request) => invoke('send_replay', { request }),
   hasAcceptedDisclaimer: () => invoke('has_accepted_disclaimer'),
+  getPetPreferences: () => invoke('get_pet_preferences'),
+  setPetEnabled: (enabled) => invoke('set_pet_enabled', { enabled }),
+  savePetPlacement: (placement) => invoke('save_pet_placement', { placement }),
   acceptDisclaimer: () => invoke('accept_disclaimer'),
   openDevtools: () => invoke('open_devtools'),
   async listen<T>(event: DesktopEvent, handler: (payload: T) => void) {

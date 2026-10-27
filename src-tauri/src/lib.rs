@@ -8,6 +8,7 @@ pub mod migration;
 pub mod models;
 pub mod network;
 pub mod pairing;
+pub mod pet;
 pub mod platform;
 pub mod proxy;
 pub mod rules;

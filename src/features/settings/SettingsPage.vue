@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bug, Download, Laptop, Pause, Router, Settings2, ShieldCheck } from '@lucide/vue'
+import { Bug, Cat, Download, Laptop, Pause, Router, Settings2, ShieldCheck } from '@lucide/vue'
 import { computed, shallowRef } from 'vue'
 import type { CaStatus, CaPrivateKeyState, CertificateTrustState, HistoricalDevice, PairedDevice, PairingChallenge, PlatformInfo, ProxyMode, ProxyStatus, SystemProxyStatus } from '../../shared/types'
 import CertificatePanel from '../certificate/CertificatePanel.vue'
@@ -21,6 +21,7 @@ const {
   captureEnabled,
   systemProxyPreferred,
   systemProxyEnabled,
+  desktopPetEnabled,
   caStatus,
   busy
 } = defineProps<{
@@ -39,6 +40,7 @@ const {
   captureEnabled: boolean
   systemProxyPreferred: boolean
   systemProxyEnabled: boolean
+  desktopPetEnabled: boolean
   caStatus: CaStatus
   busy: boolean
 }>()
@@ -49,6 +51,7 @@ const emit = defineEmits<{
   updatePairingIdleTimeout: [value: number]
   updateCapture: [value: boolean]
   updateSystemProxy: [value: boolean]
+  updateDesktopPet: [value: boolean]
   toggleProxy: []
   restoreSystemProxy: []
   generateCa: []
@@ -237,6 +240,33 @@ function renameDevice(deviceToken: string, name: string) {
     </div>
 
     <div v-else class="settings-content" role="tabpanel">
+      <section class="settings-section">
+        <div class="section-heading">
+          <Cat :size="17" />
+          <div>
+            <h2>桌面助手</h2>
+            <p>控制小橘在桌面上的显示状态。</p>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div>
+            <label for="desktop-pet-enabled">显示桌面小橘</label>
+            <p>在桌面边缘显示代理状态，并在收到请求时播放动作。</p>
+          </div>
+          <label class="switch-control">
+            <input
+              id="desktop-pet-enabled"
+              type="checkbox"
+              :checked="desktopPetEnabled"
+              :disabled="busy"
+              @change="emit('updateDesktopPet', ($event.target as HTMLInputElement).checked)"
+            />
+            <span aria-hidden="true" />
+          </label>
+        </div>
+      </section>
+
       <section class="settings-section">
         <div class="section-heading">
           <Bug :size="17" />

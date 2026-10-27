@@ -9,6 +9,7 @@ import type {
   MockRule,
   MockRuleTestResult,
   PairedDevice,
+  PetPreferences,
   PairingChallenge,
   NetworkProfile,
   PlatformInfo,
@@ -67,6 +68,7 @@ export function useNetCat() {
   const pairingChallenge = shallowRef<PairingChallenge | null>(null)
   const lanIp = shallowRef<string | null>(null)
   const captureEnabled = shallowRef(true)
+  const petPreferences = shallowRef<PetPreferences>({ version: 1, enabled: true, placement: null })
   const port = shallowRef(28086)
   const diagnosticLogs = shallowRef<readonly DiagnosticLog[]>([])
   const unlisteners: Array<() => void> = []
@@ -80,7 +82,7 @@ export function useNetCat() {
   async function initialize() {
     busy.value = true
     try {
-      const [status, localLanIp, rows, rules, certificate, systemProxy, disclaimer, platformInfo, certificateTrust, devices, idleTimeout] = await Promise.all([
+      const [status, localLanIp, rows, rules, certificate, systemProxy, disclaimer, platformInfo, certificateTrust, devices, idleTimeout, desktopPet] = await Promise.all([
         api.getProxyStatus(),
         api.getLanIp?.() ?? Promise.resolve(null),
         api.listTraffic(),
@@ -100,7 +102,11 @@ export function useNetCat() {
           return { publicTrust: 'unavailable', privateKeyState: 'unavailable' } as const
         }),
         api.listPairedDevices(),
-        api.getPairingIdleTimeout()
+        api.getPairingIdleTimeout(),
+        api.getPetPreferences().catch((cause) => {
+          error.value = normalizeDesktopError(cause)
+          return petPreferences.value
+        })
       ])
       proxyStatus.value = status
       proxyMode.value = status.mode
@@ -116,6 +122,7 @@ export function useNetCat() {
       pairedDevices.value = devices
       pairingIdleTimeout.value = idleTimeout
       disclaimerAccepted.value = disclaimer
+      petPreferences.value = desktopPet
       await refreshFeatureState()
       unlisteners.push(await api.listen<ProxyStatus>('proxy-status-changed', (payload) => {
         proxyStatus.value = payload
@@ -521,6 +528,14 @@ export function useNetCat() {
     error.value = null
   }
 
+  async function setDesktopPetEnabled(enabled: boolean) {
+    try {
+      petPreferences.value = await api.setPetEnabled(enabled)
+    } catch (cause) {
+      error.value = normalizeDesktopError(cause)
+    }
+  }
+
   function clearDiagnosticLogs() {
     diagnosticLogs.value = []
   }
@@ -557,6 +572,7 @@ export function useNetCat() {
     pairingChallenge: readonly(pairingChallenge),
     lanIp: readonly(lanIp),
     captureEnabled: readonly(captureEnabled),
+    petPreferences: readonly(petPreferences),
     port,
     diagnosticLogs: readonly(diagnosticLogs),
     isRunning,
@@ -571,6 +587,7 @@ export function useNetCat() {
     disconnectPairedDevice,
     deletePairedDeviceData,
     setCapture,
+    setDesktopPetEnabled,
     selectTraffic,
     getTrafficDetail,
     clearSelection,

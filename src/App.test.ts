@@ -61,6 +61,8 @@ function windowsApi(): DesktopApi {
     listPairedDevices: vi.fn().mockResolvedValue([]),
     listMockRules: vi.fn().mockResolvedValue([]),
     hasAcceptedDisclaimer: vi.fn().mockResolvedValue(true),
+    getPetPreferences: vi.fn().mockResolvedValue({ version: 1, enabled: true, placement: null }),
+    setPetEnabled: vi.fn().mockImplementation(async (enabled: boolean) => ({ version: 1, enabled, placement: null })),
     listen: vi.fn().mockResolvedValue(() => undefined)
   }
 }
@@ -70,6 +72,20 @@ function renderWithApi(api: DesktopApi) {
 }
 
 describe('App', () => {
+  it('loads and updates the desktop pet preference from system settings', async () => {
+    const api = windowsApi()
+    renderWithApi(api)
+
+    await fireEvent.click(await screen.findByRole('button', { name: '设置' }))
+    await fireEvent.click(await screen.findByRole('tab', { name: '系统配置' }))
+    const checkbox = screen.getByRole('checkbox', { name: '显示桌面小橘' })
+    expect(checkbox).toBeChecked()
+
+    await fireEvent.click(checkbox)
+    await waitFor(() => expect(api.setPetEnabled).toHaveBeenCalledWith(false))
+    expect(checkbox).not.toBeChecked()
+  })
+
   it.each([
     ['getCaStatus', 'CA_KEY_MISMATCH'],
     ['getCaStatus', 'CA_KEY_UNAVAILABLE'],
