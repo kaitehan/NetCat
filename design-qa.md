@@ -104,4 +104,104 @@ The reference is a style-direction source for a different product, not a pixel-i
 - Browser console check: 0 errors and 0 warnings.
 - Findings: no actionable P0, P1, or P2 issues remain in this pass.
 
+## Intelligent Support Border Reduction Pass
+
+- Source visual truth: `/var/folders/wn/pqf4d4ps6ml8kpz4s2f0zgxm0000gp/T/codex-clipboard-6245d205-886e-49fc-8c78-170db1b984cb.png` (2454 x 1882 px).
+- Initial implementation screenshot: `/tmp/netcat-support-open-1440.png` (1440 x 900 CSS px at device scale factor 1).
+- Refined implementation screenshot: `/tmp/netcat-support-refined-1440.png` (1440 x 900 CSS px at device scale factor 1).
+- Combined comparison: `/tmp/netcat-support-side-by-side.png` (1800 x 800 px comparison canvas).
+- State: light theme, browser demo data loaded, support panel open, empty new conversation, message input focused.
+- Normalization: both full screenshots were proportionally contained in equal-width comparison regions without stretching. The source is a style reference for a full customer-service product, while the implementation remains a 520 px NetCat overlay, so the comparison evaluates hierarchy and surface treatment rather than identical region proportions.
+
+### Full-View And Focused Comparison
+
+- Fonts and typography: both use a neutral system sans-serif, a strong support title, subdued metadata, and compact action copy. NetCat intentionally keeps smaller operational-tool sizing and zero custom letter spacing.
+- Spacing and layout rhythm: the refined panel follows the reference's light history sidebar and clean white conversation canvas. The header, empty state, and composer use open spacing without expanding into marketing-page scale.
+- Colors and visual tokens: the implementation reuses NetCat's `--surface`, `--surface-raised`, `--accent`, `--accent-soft`, text, radius, and shadow variables. No reference-specific colors were hardcoded.
+- Image quality and asset fidelity: the reference robot is product-specific and was not copied. NetCat's existing high-resolution application icon provides the branded title and empty-state visual without introducing a mismatched asset.
+- Copy and content: the implementation preserves the approved NetCat scope: new conversation, local history, user-only messages, and no unsupported upload, voice, category, or AI reply controls.
+- Focused evidence: the left sidebar now has one outlined primary action, borderless white history rows, and background-based grouping; the conversation area has no section dividers, and the composer is the only persistent input boundary.
+
+### Comparison History
+
+- Initial finding (P2): the support header, history toolbar, vertical split, history rows, conversation header, message bubbles, notice, and composer each used visible dividers or outlines, producing the dense wireframe effect identified by the user.
+- Fix: removed nonessential section dividers and row borders, promoted the new-conversation action, separated columns with surface colors, removed message-bubble outlines, and consolidated input chrome into one rounded composer boundary.
+- Post-fix evidence: `/tmp/netcat-support-refined-1440.png` and `/tmp/netcat-support-side-by-side.png` show the simplified hierarchy. No actionable P0, P1, or P2 mismatch remains for the requested style adaptation.
+- P3 intentional deviation: the NetCat cat icon replaces the reference robot so the support feature remains consistent with the product brand.
+
+final result: passed
+
+## Zhinai Greeting Bubble Pass
+
+- Source visual truth: `/var/folders/wn/pqf4d4ps6ml8kpz4s2f0zgxm0000gp/T/codex-clipboard-795ea625-f8c4-40d8-88e0-29912d84ec29.png` (2880 x 1864 px).
+- Desktop implementation: `output/playwright/zhinai-greeting-1440x900.png` (1440 x 900 CSS px at device scale factor 1).
+- Compact implementations: `output/playwright/zhinai-greeting-1080x700.png` and `output/playwright/zhinai-greeting-820x700.png`.
+- Reduced-motion implementation: `output/playwright/zhinai-greeting-reduced-motion-820x700.png`.
+- Focus and open-state evidence: `output/playwright/zhinai-greeting-focus-820x700.png` and `output/playwright/zhinai-greeting-open-820x700.png`.
+- State: light theme, launcher visible, greeting typing above the launcher; additional captures cover completed reduced-motion copy, keyboard focus, and assistant panel opened through the greeting.
+- Full-view comparison: the greeting occupies the annotated bottom-right region above the launcher, remains visually subordinate to the workspace, and does not cover the footer or persistent toolbar controls.
+- Focused evidence: the 180–240 px bubble wraps the longest greeting to two lines at 820 px, retains a clear pointer toward the launcher, and shows an orange focus outline without changing its dimensions.
+- Fonts and typography: compact system type, 12 px body size, 1.5 line height, zero custom letter spacing, and natural Chinese wrapping match the existing tool hierarchy.
+- Spacing and layout rhythm: the bubble sits 12 px above the 44 px launcher and aligns to its right edge. Enter/leave movement is limited to 4 px and disabled for reduced motion.
+- Colors and visual tokens: white surface, existing border/text/shadow tokens, and the launcher-specific orange caret/focus treatment preserve the established palette.
+- Image quality and asset fidelity: the existing application PNG remains unchanged and fills the launcher.
+- Copy and content: the approved five greetings are built in; the captured states show both work-focused and general greeting variants.
+- Primary interactions checked: random delayed appearance, typewriter progress, keyboard focus, launcher hover, greeting click to open, panel close and launcher restoration.
+- Accessibility and motion: the greeting remains a real button, completed text is announced once through a separate polite live region, and reduced-motion shows complete copy immediately with no ripple or transition animation.
+- Browser console check: 0 errors and 0 warnings.
+- Findings: no actionable P0, P1, or P2 issues remain in this pass.
+
+final result: passed
+
+## Zhinai Launcher Orange Accent Pass
+
+- User direction: launcher background and ripple should match the orange application icon.
+- Implementation screenshot: `output/playwright/zhinai-launcher-orange-ripple-1440x900.png` (1440 x 900 CSS px at device scale factor 1).
+- State: light theme, support panel closed, orange ripple visible around the bottom-right launcher.
+- Full-view and focused evidence: the icon remains edge-to-edge within the 44 px circle, while the border, base surface, outer glow, and two staggered ripple rings consistently use the icon-derived `--assistant-accent` token (`#d2752e`). No additional crop was needed because the launcher and its relationship to the footer are clearly visible at native resolution.
+- Fonts and typography: unchanged.
+- Spacing and layout rhythm: unchanged; animated transforms do not affect document layout.
+- Colors and visual tokens: the launcher-specific orange is isolated to one semantic token and does not replace the application's blue primary-action palette.
+- Image quality and asset fidelity: the original application PNG remains sharp and unstretched.
+- Copy and content: unchanged.
+- Browser console check: 0 errors and 0 warnings.
+- Findings: no actionable P0, P1, or P2 issues remain in this pass.
+
+final result: passed
+
+## Zhinai Launcher Icon And Ripple Pass
+
+- User annotation: `/var/folders/wn/pqf4d4ps6ml8kpz4s2f0zgxm0000gp/T/codex-clipboard-0726047d-775c-47dc-87cb-a3ad6ae24664.png` (386 x 232 px).
+- Implementation screenshot: `output/playwright/zhinai-launcher-ripple-1440x900.png` (1440 x 900 CSS px at device scale factor 1).
+- State: light theme, support panel closed, floating launcher visible during its ripple animation.
+- Full-view evidence: the application icon now fills the 44 px circular launcher up to its 1 px accent border. The former blue interior padding is removed.
+- Focused evidence: the bottom-right launcher remains clear of the status text, and its two staggered accent rings expand outside the icon without shifting layout or obscuring controls.
+- Fonts and typography: unchanged; the launcher remains icon-only with the accessible name `打开智奈助手`.
+- Spacing and layout rhythm: the launcher retains its fixed 44 px footprint and existing 18 px right / 38 px bottom placement. Animation uses transforms only, so surrounding layout remains stable.
+- Colors and visual tokens: the border, rings, focus treatment, and layered shadows reuse the existing accent and shadow tokens.
+- Image quality and asset fidelity: the existing application PNG is rendered with `object-fit: cover` and circular clipping, with no stretching or visible inner gap.
+- Copy and content: unchanged.
+- Accessibility and motion: decorative image alt text remains empty, and continuous ripple animation is disabled under `prefers-reduced-motion: reduce`.
+- Browser console check: 0 errors and 0 warnings.
+- Findings: no actionable P0, P1, or P2 issues remain in this pass.
+
+final result: passed
+
+## Zhinai Assistant Naming Pass
+
+- Source visual truth: `/var/folders/wn/pqf4d4ps6ml8kpz4s2f0zgxm0000gp/T/codex-clipboard-6245d205-886e-49fc-8c78-170db1b984cb.png` (2454 x 1882 px).
+- Desktop implementation: `output/playwright/zhinai-assistant-1440x900.png` (1440 x 900 CSS px at device scale factor 1).
+- Compact implementation: `output/playwright/zhinai-assistant-820x700.png` (820 x 700 CSS px at device scale factor 1).
+- Combined comparison: `output/playwright/zhinai-reference-comparison.png` (1640 x 700 px). The source was proportionally contained in an 820 x 700 region; the 820 x 700 implementation was placed beside it without stretching.
+- State: light theme, support panel open, empty new conversation, message input focused, send action disabled.
+- Fonts and typography: the product title now reads `智奈助手`; the empty-state introduction reads `你好，我是小橘`. Both retain the compact system-font hierarchy, zero custom letter spacing, and clear wrapping at desktop and compact widths.
+- Spacing and layout rhythm: the naming change does not alter the 520 px overlay, two-column history/chat layout, open conversation canvas, or composer geometry. No clipping, overlap, or layout shift appears at either viewport.
+- Colors and visual tokens: the renamed UI continues to use the existing NetCat surface, text, accent, radius, and shadow tokens with no new hardcoded colors.
+- Image quality and asset fidelity: the existing NetCat application icon remains sharp in the panel title and empty state; no asset was replaced or synthesized for the rename.
+- Copy and content: the entry, panel accessible name, visible title, and close action consistently use `智奈助手`; the assistant persona uses `小橘`. The user-only frontend scope remains explicit through the absence of simulated assistant messages.
+- Focused region evidence: the title bar, empty state, disabled send action, and two-column behavior are readable in both implementation screenshots, so no additional crop was required.
+- Primary interactions checked: opened the panel from the floating entry and verified the initial focused input and disabled empty-send state.
+- Browser console check: 0 errors and 0 warnings.
+- Findings: no actionable P0, P1, or P2 issues remain in this pass.
+
 final result: passed
