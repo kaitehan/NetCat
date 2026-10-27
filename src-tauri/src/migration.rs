@@ -8,6 +8,31 @@ const LEGACY_DATABASE_NAME: &str = "netcapture.sqlite3";
 const CURRENT_DATABASE_NAME: &str = "netcat.sqlite3";
 const MIGRATION_DATABASE_NAME: &str = ".netcat.sqlite3.migrating";
 
+pub fn cleanup_legacy_injection_artifacts(data_directory: &Path) -> Result<(), AppError> {
+    let directory = data_directory.join("frida");
+    match fs::remove_file(directory.join("frida-session.js")) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(artifact_cleanup_error(error)),
+    }
+    let mut entries = fs::read_dir(&directory).map_err(artifact_cleanup_error)?;
+    if entries
+        .next()
+        .transpose()
+        .map_err(artifact_cleanup_error)?
+        .is_none()
+    {
+        fs::remove_dir(&directory).map_err(artifact_cleanup_error)?;
+    }
+    Ok(())
+}
+
+fn artifact_cleanup_error(error: std::io::Error) -> AppError {
+    AppError::new("ARTIFACT_CLEANUP_FAILED", "无法清理旧版注入会话文件")
+        .with_detail(error.to_string())
+        .with_action("请检查应用数据目录权限后重试")
+}
+
 pub fn migrate_legacy_database(
     legacy_data_directory: &Path,
     current_data_directory: &Path,

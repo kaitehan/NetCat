@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { Braces, FlaskConical, Info, Network, Settings, ShieldCheck } from '@lucide/vue'
+import { Braces, FlaskConical, Info, Network, Settings } from '@lucide/vue'
 import appIcon from '../../src-tauri/icons/icon.png'
 import { APP_BRAND } from '../shared/brand'
 
 const { activeView, trafficCount, mockCount } = defineProps<{
-  activeView: 'traffic' | 'mocks' | 'scripts' | 'pinning' | 'settings' | 'about'
+  activeView: 'traffic' | 'mocks' | 'scripts' | 'settings' | 'about'
   trafficCount: number
   mockCount: number
 }>()
 
 const emit = defineEmits<{
-  changeView: [view: 'traffic' | 'mocks' | 'scripts' | 'pinning' | 'settings' | 'about']
+  changeView: [view: 'traffic' | 'mocks' | 'scripts' | 'settings' | 'about']
 }>()
 </script>
 
@@ -53,15 +53,6 @@ const emit = defineEmits<{
       >
         <Braces :size="16" />
         <span>脚本</span>
-      </button>
-      <button
-        type="button"
-        :class="{ active: activeView === 'pinning' }"
-        aria-label="SSL Pinning"
-        @click="emit('changeView', 'pinning')"
-      >
-        <ShieldCheck :size="16" />
-        <span>SSL Pinning</span>
       </button>
     </nav>
 

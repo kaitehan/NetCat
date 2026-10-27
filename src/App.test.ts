@@ -407,12 +407,12 @@ describe('App', () => {
   })
 
   it.each([
-    ['脚本', 'JavaScript 脚本'],
-    ['SSL Pinning', 'SSL Pinning']
+    ['脚本', 'JavaScript 脚本']
   ])('opens %s in the full workspace layout', async (navigationLabel, heading) => {
     const api = windowsApi()
     const { container } = renderWithApi(api)
 
+    expect(screen.queryByRole('button', { name: 'SSL Pinning' })).not.toBeInTheDocument()
     await fireEvent.click(screen.getByRole('button', { name: navigationLabel }))
 
     expect(await screen.findByRole('heading', { name: heading })).toBeVisible()

@@ -7,7 +7,7 @@ use netcat_lib::{
     ca::{CaManager, SecretStore},
     models::{
         DiagnosticLog, MatchKind, MockRule, ProxyConfig, ProxyMode, ProxyScript, ProxyState,
-        ReplayMode, ReplayRequest, ScriptKind, TrafficDraft, TrafficOrigin, TrafficSummary,
+        ReplayMode, ReplayRequest, TrafficDraft, TrafficOrigin, TrafficSummary,
     },
     proxy::{ProxyEventSink, ProxyService},
     storage::Store,
@@ -275,9 +275,6 @@ async fn mock_aware_replay_runs_request_scripts_before_mock_matching() {
             match_kind: MatchKind::Contains,
             url_pattern: "/original".into(),
             source: "function onRequest(ctx) { return { url: ctx.url.replace('/original', '/scripted') }; }".into(),
-            kind: ScriptKind::Proxy,
-            platform: None,
-            builtin: false,
             created_at: "2026-10-26T10:00:00Z".into(),
         })
         .unwrap();
@@ -442,9 +439,6 @@ async fn live_proxy_can_return_a_synthetic_response_from_a_request_script() {
             match_kind: MatchKind::Contains,
             url_pattern: "/script".into(),
             source: r#"function onRequest() { return { response: { status: 202, headers: { "content-type": "text/plain" }, bodyText: "from-script" } }; }"#.into(),
-            kind: ScriptKind::Proxy,
-            platform: None,
-            builtin: false,
             created_at: "2026-10-26T10:00:00Z".into(),
         })
         .unwrap();

@@ -6,7 +6,7 @@ use std::{
 use rquickjs::{Context, Runtime};
 use serde::{Deserialize, Serialize};
 
-use crate::models::{MatchKind, ProxyScript, ScriptKind};
+use crate::models::{MatchKind, ProxyScript};
 
 const SCRIPT_MEMORY_LIMIT: usize = 64 * 1024 * 1024;
 const SCRIPT_TIMEOUT: Duration = Duration::from_millis(100);
@@ -96,7 +96,7 @@ impl ScriptEngine {
     ) -> ScriptExecutionReport {
         let mut ordered = scripts
             .iter()
-            .filter(|script| script.enabled && script.kind == ScriptKind::Proxy)
+            .filter(|script| script.enabled)
             .collect::<Vec<_>>();
         ordered.sort_by(|left, right| {
             right
@@ -136,7 +136,7 @@ impl ScriptEngine {
     ) -> ScriptExecutionReport {
         let mut ordered = scripts
             .iter()
-            .filter(|script| script.enabled && script.kind == ScriptKind::Proxy)
+            .filter(|script| script.enabled)
             .collect::<Vec<_>>();
         ordered.sort_by(|left, right| {
             right

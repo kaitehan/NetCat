@@ -34,7 +34,7 @@ describe('AppSidebar', () => {
     expect(emitted().changeView).toEqual([['settings']])
   })
 
-  it('opens the scripts and SSL Pinning workspaces', async () => {
+  it('opens scripts without exposing SSL Pinning navigation', async () => {
     const { emitted } = render(AppSidebar, {
       props: {
         activeView: 'traffic',
@@ -44,9 +44,9 @@ describe('AppSidebar', () => {
     })
 
     await fireEvent.click(screen.getByRole('button', { name: '脚本' }))
-    await fireEvent.click(screen.getByRole('button', { name: 'SSL Pinning' }))
+    expect(screen.queryByRole('button', { name: 'SSL Pinning' })).not.toBeInTheDocument()
 
-    expect(emitted().changeView).toEqual([['scripts'], ['pinning']])
+    expect(emitted().changeView).toEqual([['scripts']])
   })
 
   it('opens the low-priority About page below settings without a proxy status row', async () => {

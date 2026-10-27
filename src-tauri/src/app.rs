@@ -8,14 +8,12 @@ use crate::{
     diagnostics::build_diagnostic_archive,
     error::AppError,
     export::{build_exchange_copy as create_exchange_copy, build_har},
-    frida::{builtin_injection_scripts, FridaManager},
-    migration::migrate_legacy_macos_database,
+    migration::{cleanup_legacy_injection_artifacts, migrate_legacy_macos_database},
     models::{
         CaStatus, DiagnosticLevel, DiagnosticLog, DiagnosticScope, MockRule, MockRuleMatch,
-        MockRuleTestResult, NetworkProfile, PairedDevice, PairingChallenge, PinningSessionConfig,
-        PinningSessionStatus, ProxyConfig, ProxyMode, ProxyScript, ProxyStatus, ReplayDraft,
-        ReplayMode, ReplayRequest, ReplayResult, ScriptKind, TrafficCopyKind, TrafficDetail,
-        TrafficFilter, TrafficSummary,
+        MockRuleTestResult, NetworkProfile, PairedDevice, PairingChallenge, ProxyConfig, ProxyMode,
+        ProxyScript, ProxyStatus, ReplayDraft, ReplayMode, ReplayRequest, ReplayResult,
+        TrafficCopyKind, TrafficDetail, TrafficFilter, TrafficSummary,
     },
     network::builtin_network_profiles,
     pairing::{PairingEventSink, PairingService},
@@ -35,7 +33,6 @@ struct AppState {
     pairing: Arc<PairingService>,
     ca: CaManager,
     platform: PlatformServices,
-    frida: Arc<FridaManager>,
 }
 
 enum TrustOperation {
@@ -575,9 +572,7 @@ fn test_mock_rules(
 }
 
 fn all_scripts(state: &AppState) -> Result<Vec<ProxyScript>, AppError> {
-    let mut scripts = builtin_injection_scripts();
-    scripts.extend(state.store.list_scripts()?);
-    Ok(scripts)
+    state.store.list_scripts()
 }
 
 #[tauri::command]
@@ -590,10 +585,6 @@ fn save_script(
     state: State<'_, AppState>,
     mut script: ProxyScript,
 ) -> Result<ProxyScript, AppError> {
-    if script.builtin {
-        return Err(AppError::new("SCRIPT_READ_ONLY", "内置脚本不能直接修改")
-            .with_action("请复制内置脚本后再编辑"));
-    }
     validate_script_source(&script.source).map_err(|error| {
         AppError::new("SCRIPT_SYNTAX_ERROR", "JavaScript 语法校验失败")
             .with_detail(error)
@@ -611,9 +602,6 @@ fn save_script(
 
 #[tauri::command]
 fn delete_script(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
-    if id.starts_with("builtin-") {
-        return Err(AppError::new("SCRIPT_READ_ONLY", "内置脚本不能删除"));
-    }
     state.store.delete_script(&id)
 }
 
@@ -738,73 +726,6 @@ fn set_active_network_profile(
 }
 
 #[tauri::command]
-fn get_frida_environment(state: State<'_, AppState>) -> crate::models::FridaEnvironmentStatus {
-    state.frida.environment()
-}
-
-#[tauri::command]
-fn list_frida_devices(
-    state: State<'_, AppState>,
-) -> Result<Vec<crate::models::FridaDevice>, AppError> {
-    state.frida.devices()
-}
-
-#[tauri::command]
-fn list_frida_applications(
-    state: State<'_, AppState>,
-    device_id: String,
-) -> Result<Vec<crate::models::FridaApplication>, AppError> {
-    state.frida.applications(&device_id)
-}
-
-#[tauri::command]
-fn get_pinning_session_status(state: State<'_, AppState>) -> PinningSessionStatus {
-    state.frida.status()
-}
-
-#[tauri::command]
-fn start_pinning_session(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-    config: PinningSessionConfig,
-) -> Result<PinningSessionStatus, AppError> {
-    let scripts = all_scripts(&state)?;
-    let selected = config
-        .script_ids
-        .iter()
-        .filter_map(|id| scripts.iter().find(|script| &script.id == id))
-        .filter(|script| script.kind == ScriptKind::Injection)
-        .map(|script| script.source.as_str())
-        .collect::<Vec<_>>();
-    if selected.is_empty() {
-        return Err(AppError::new(
-            "FRIDA_SCRIPT_REQUIRED",
-            "请至少选择一个注入脚本",
-        ));
-    }
-    let log_app = app.clone();
-    let status = state.frida.start(
-        &config,
-        &selected.join("\n\n"),
-        Arc::new(move |line| {
-            let _ = log_app.emit("pinning-log", line);
-        }),
-    )?;
-    let _ = app.emit("pinning-session-changed", &status);
-    Ok(status)
-}
-
-#[tauri::command]
-fn stop_pinning_session(
-    app: tauri::AppHandle,
-    state: State<'_, AppState>,
-) -> Result<PinningSessionStatus, AppError> {
-    let status = state.frida.stop()?;
-    let _ = app.emit("pinning-session-changed", &status);
-    Ok(status)
-}
-
-#[tauri::command]
 fn export_har(state: State<'_, AppState>, destination: String) -> Result<(), AppError> {
     let har = build_har(&state.store.list_all_details()?)?;
     let body = serde_json::to_vec_pretty(&har).map_err(|error| {
@@ -920,6 +841,8 @@ pub fn run() {
                 .map_err(|error| format!("无法读取应用数据目录: {error}"))?;
             let migrated_from_netcapture = migrate_legacy_macos_database(&data_directory)
                 .map_err(|error| error.to_string())?;
+            cleanup_legacy_injection_artifacts(&data_directory)
+                .map_err(|error| error.to_string())?;
             let store = Arc::new(
                 Store::open(
                     &data_directory.join("netcat.sqlite3"),
@@ -949,14 +872,12 @@ pub fn run() {
                 platform.secrets.clone(),
             );
             initialize_migrated_ca(migrated_from_netcapture, &ca);
-            let frida = Arc::new(FridaManager::new(data_directory.join("frida")));
             app.manage(AppState {
                 store,
                 proxy,
                 pairing,
                 ca,
                 platform,
-                frida,
             });
             Ok(())
         })
@@ -1008,12 +929,6 @@ pub fn run() {
             delete_network_profile,
             get_active_network_profile,
             set_active_network_profile,
-            get_frida_environment,
-            list_frida_devices,
-            list_frida_applications,
-            get_pinning_session_status,
-            start_pinning_session,
-            stop_pinning_session,
             export_har,
             build_exchange_copy,
             replay_exchange,
@@ -1029,7 +944,6 @@ pub fn run() {
     application.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::Exit) {
             if let Some(state) = app_handle.try_state::<AppState>() {
-                let _ = state.frida.stop();
                 tauri::async_runtime::block_on(async {
                     let _ = state.proxy.stop().await;
                 });
@@ -1158,7 +1072,6 @@ mod tests {
                 pairing.clone(),
             )),
             pairing,
-            frida: Arc::new(FridaManager::new(directory.join("frida"))),
             store,
             platform,
         }

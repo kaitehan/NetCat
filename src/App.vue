@@ -33,11 +33,10 @@ const DiagnosticPanel = defineAsyncComponent(() => import('./features/diagnostic
 const TrafficInspector = defineAsyncComponent(() => import('./features/traffic/TrafficInspector.vue'))
 const ReplayEditor = defineAsyncComponent(() => import('./features/replay/ReplayEditor.vue'))
 const ScriptWorkspace = defineAsyncComponent(() => import('./features/scripts/ScriptWorkspace.vue'))
-const PinningWorkspace = defineAsyncComponent(() => import('./features/pinning/PinningWorkspace.vue'))
 const NetworkProfileEditor = defineAsyncComponent(() => import('./features/network/NetworkProfileEditor.vue'))
 
 const capture = useNetCat()
-const activeView = shallowRef<'traffic' | 'mocks' | 'scripts' | 'pinning' | 'settings' | 'about'>('traffic')
+const activeView = shallowRef<'traffic' | 'mocks' | 'scripts' | 'settings' | 'about'>('traffic')
 const mockEditorOpen = shallowRef(false)
 const replayEditorOpen = shallowRef(false)
 const replayDraft = shallowRef<ReplayDraft | null>(null)
@@ -105,7 +104,7 @@ const hostOptions = computed(() => [
 const hiddenRuleCount = computed(() => hiddenUrls.value.size + hiddenHosts.value.size)
 const contextOpen = computed(() => contextRow.value !== null)
 const toolbarlessView = computed(() => activeView.value !== 'traffic')
-const fullWorkspaceView = computed(() => ['scripts', 'pinning', 'settings', 'about'].includes(activeView.value))
+const fullWorkspaceView = computed(() => ['scripts', 'settings', 'about'].includes(activeView.value))
 const contextDisabledReasons = computed<Partial<Record<TrafficMenuAction, string>>>(() => {
   const row = contextRow.value
   const detail = contextDetail.value
@@ -482,20 +481,6 @@ onMounted(() => void capture.initialize())
           @delete="capture.deleteScript"
           @toggle="capture.setScriptEnabled"
           @test="capture.testScript"
-        />
-        <PinningWorkspace
-          v-else-if="activeView === 'pinning'"
-          :environment="capture.fridaEnvironment.value"
-          :devices="capture.fridaDevices.value"
-          :applications="capture.fridaApplications.value"
-          :scripts="capture.scripts.value"
-          :status="capture.pinningSession.value"
-          :logs="capture.pinningLogs.value"
-          :busy="capture.busy.value"
-          @refresh="capture.refreshFrida"
-          @load-applications="capture.loadFridaApplications"
-          @start="capture.startPinningSession"
-          @stop="capture.stopPinningSession"
         />
         <AboutPage v-else />
       </main>

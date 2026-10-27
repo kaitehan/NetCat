@@ -9,14 +9,9 @@ import type {
   CertificateTrustState,
   CertificateTrustDetails,
   DiagnosticLog,
-  FridaApplication,
-  FridaDevice,
-  FridaEnvironmentStatus,
   MockRule,
   MockRuleTestResult,
   NetworkProfile,
-  PinningSessionConfig,
-  PinningSessionStatus,
   PlatformInfo,
   PairedDevice,
   PairingChallenge,
@@ -42,8 +37,6 @@ export type DesktopEvent =
   | 'diagnostic-log'
   | 'paired-devices-changed'
   | 'network-profile-changed'
-  | 'pinning-session-changed'
-  | 'pinning-log'
 
 export interface DesktopApi {
   getPlatformInfo(): Promise<PlatformInfo>
@@ -93,12 +86,6 @@ export interface DesktopApi {
   deleteNetworkProfile(id: string): Promise<void>
   getActiveNetworkProfile(): Promise<string | null>
   setActiveNetworkProfile(id: string | null): Promise<void>
-  getFridaEnvironment(): Promise<FridaEnvironmentStatus>
-  listFridaDevices(): Promise<FridaDevice[]>
-  listFridaApplications(deviceId: string): Promise<FridaApplication[]>
-  getPinningSessionStatus(): Promise<PinningSessionStatus>
-  startPinningSession(config: PinningSessionConfig): Promise<PinningSessionStatus>
-  stopPinningSession(): Promise<PinningSessionStatus>
   exportHar(): Promise<void>
   copyCurl(id: string): Promise<void>
   copyExchange(id: string, kind: TrafficCopyKind): Promise<void>
@@ -178,36 +165,7 @@ const browserRows: TrafficSummary[] = [
   }
 ]
 
-const browserScripts: ProxyScript[] = [
-  {
-    id: 'builtin-android-pinning',
-    name: 'Android 常见 TLS 栈',
-    enabled: true,
-    priority: 100,
-    methods: [],
-    matchKind: 'contains',
-    urlPattern: '',
-    source: 'Java.perform(function () {});',
-    kind: 'injection',
-    platform: 'android',
-    builtin: true,
-    createdAt: '2026-10-26T00:00:00Z'
-  },
-  {
-    id: 'builtin-ios-pinning',
-    name: 'iOS 常见 TLS 栈',
-    enabled: true,
-    priority: 100,
-    methods: [],
-    matchKind: 'contains',
-    urlPattern: '',
-    source: "send({ type: 'netcat', message: 'iOS hooks installed' });",
-    kind: 'injection',
-    platform: 'ios',
-    builtin: true,
-    createdAt: '2026-10-26T00:00:00Z'
-  }
-]
+const browserScripts: ProxyScript[] = []
 const browserNetworkProfiles: NetworkProfile[] = [
   { id: 'fast-4g', name: '高速 4G', kind: 'preset', latencyMs: 20, jitterMs: 0, downloadKbps: 9000, uploadKbps: 1500, timeoutPercent: 0, disconnectPercent: 0, methods: [], matchKind: 'contains', urlPattern: '', builtin: true, createdAt: '2026-10-26T00:00:00Z' },
   { id: 'slow-4g', name: '低速 4G', kind: 'preset', latencyMs: 150, jitterMs: 0, downloadKbps: 1600, uploadKbps: 750, timeoutPercent: 0, disconnectPercent: 0, methods: [], matchKind: 'contains', urlPattern: '', builtin: true, createdAt: '2026-10-26T00:00:00Z' },
@@ -475,24 +433,6 @@ const browserApi: DesktopApi = {
   async setActiveNetworkProfile(id) {
     browserActiveNetworkProfile = id
   },
-  async getFridaEnvironment() {
-    return { available: false, version: null, error: '浏览器预览不支持 Frida' }
-  },
-  async listFridaDevices() {
-    return []
-  },
-  async listFridaApplications() {
-    return []
-  },
-  async getPinningSessionStatus() {
-    return { state: 'stopped', target: null, processId: null, error: null }
-  },
-  async startPinningSession() {
-    throw { code: 'FRIDA_UNAVAILABLE', message: '浏览器预览不支持 Frida' } satisfies AppError
-  },
-  async stopPinningSession() {
-    return { state: 'stopped', target: null, processId: null, error: null }
-  },
   async exportHar() {},
   async copyCurl(id) {
     const row = browserRows.find((candidate) => candidate.id === id)
@@ -627,12 +567,6 @@ const tauriApi: DesktopApi = {
   deleteNetworkProfile: (id) => invoke('delete_network_profile', { id }),
   getActiveNetworkProfile: () => invoke('get_active_network_profile'),
   setActiveNetworkProfile: (id) => invoke('set_active_network_profile', { id }),
-  getFridaEnvironment: () => invoke('get_frida_environment'),
-  listFridaDevices: () => invoke('list_frida_devices'),
-  listFridaApplications: (deviceId) => invoke('list_frida_applications', { deviceId }),
-  getPinningSessionStatus: () => invoke('get_pinning_session_status'),
-  startPinningSession: (config) => invoke('start_pinning_session', { config }),
-  stopPinningSession: () => invoke('stop_pinning_session'),
   async exportHar() {
     const destination = await save({ defaultPath: 'netcat-session.har', filters: [{ name: 'HTTP Archive', extensions: ['har'] }] })
     if (destination) {

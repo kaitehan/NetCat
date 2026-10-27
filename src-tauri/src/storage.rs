@@ -131,6 +131,16 @@ impl Store {
                  );
              INSERT OR IGNORE INTO schema_migrations(version) VALUES (5);",
         )?;
+        connection.execute_batch(
+            "BEGIN;
+             DELETE FROM scripts
+               WHERE json_extract(payload, '$.kind') = 'injection'
+                 AND NOT EXISTS (
+                   SELECT 1 FROM schema_migrations WHERE version = 6
+                 );
+             INSERT OR IGNORE INTO schema_migrations(version) VALUES (6);
+             COMMIT;",
+        )?;
         connection.execute(
             "CREATE INDEX IF NOT EXISTS exchanges_device_token_idx ON exchanges(device_token)",
             [],

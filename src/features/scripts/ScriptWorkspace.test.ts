@@ -4,19 +4,18 @@ import ScriptWorkspace from './ScriptWorkspace.vue'
 import type { ProxyScript } from '../../shared/types'
 
 const scripts: ProxyScript[] = [
-  { id: 'proxy-1', name: '添加调试头', enabled: true, priority: 10, methods: ['GET'], matchKind: 'contains', urlPattern: '/api', source: 'function onRequest(ctx) { return ctx; }', kind: 'proxy', platform: null, builtin: false, createdAt: '' },
-  { id: 'builtin-android-pinning', name: 'Android 常见 TLS 栈', enabled: true, priority: 100, methods: [], matchKind: 'contains', urlPattern: '', source: 'Java.perform(function () {});', kind: 'injection', platform: 'android', builtin: true, createdAt: '' }
+  { id: 'proxy-1', name: '添加调试头', enabled: true, priority: 10, methods: ['GET'], matchKind: 'contains', urlPattern: '/api', source: 'function onRequest(ctx) { return ctx; }', createdAt: '' }
 ]
 
 describe('ScriptWorkspace', () => {
-  it('separates proxy and injection scripts and protects built-ins', async () => {
+  it('edits proxy scripts directly without script type tabs or injection settings', async () => {
     render(ScriptWorkspace, { props: { scripts, busy: false, testResult: null } })
-    expect(screen.getByText('添加调试头')).toBeVisible()
-
-    await fireEvent.click(screen.getByRole('tab', { name: '注入脚本' }))
-    await fireEvent.click(screen.getByRole('button', { name: '编辑 Android 常见 TLS 栈' }))
-    expect(screen.getByText('内置脚本只读')).toBeVisible()
-    expect(screen.getByRole('button', { name: '保存脚本' })).toBeDisabled()
+    expect(screen.queryByRole('tablist', { name: '脚本类型' })).not.toBeInTheDocument()
+    await fireEvent.click(screen.getByRole('button', { name: '编辑 添加调试头' }))
+    expect(screen.getByLabelText('请求方法')).toHaveValue('GET')
+    expect(screen.queryByLabelText('注入平台')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '保存脚本' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: '测试脚本' })).toBeEnabled()
   })
 
   it('creates a proxy script with an explicit matcher and source', async () => {
@@ -30,8 +29,8 @@ describe('ScriptWorkspace', () => {
     const firstSave = view.emitted('save')[0] as [ProxyScript]
     expect(firstSave[0]).toEqual(expect.objectContaining({
       name: '改写 API',
-      urlPattern: '/v1/users',
-      kind: 'proxy'
+      urlPattern: '/v1/users'
     }))
+    expect(Object.keys(firstSave[0]).sort()).toEqual(['id', 'name', 'enabled', 'priority', 'methods', 'matchKind', 'urlPattern', 'source', 'createdAt'].sort())
   })
 })

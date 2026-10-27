@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { Braces, Play, Plus, Save, Trash2 } from '@lucide/vue'
-import { computed, reactive, shallowRef } from 'vue'
+import { reactive, shallowRef } from 'vue'
 import BodyEditor from '../../components/BodyEditor.vue'
-import type { ProxyScript, ScriptKind, ScriptTestResult } from '../../shared/types'
+import type { ProxyScript, ScriptTestResult } from '../../shared/types'
 
-const props = defineProps<{
+defineProps<{
   scripts: readonly ProxyScript[]
   busy: boolean
   testResult: ScriptTestResult | null
@@ -17,35 +17,22 @@ const emit = defineEmits<{
   test: [script: ProxyScript]
 }>()
 
-const activeKind = shallowRef<ScriptKind>('proxy')
 const selectedId = shallowRef<string | null>(null)
 const editing = shallowRef(false)
-const draft = reactive<ProxyScript>(emptyScript('proxy'))
-const visibleScripts = computed(() => props.scripts.filter((script) => script.kind === activeKind.value))
+const draft = reactive<ProxyScript>(emptyScript())
 
-function emptyScript(kind: ScriptKind): ProxyScript {
+function emptyScript(): ProxyScript {
   return {
     id: '',
     name: '',
     enabled: true,
     priority: 0,
-    methods: kind === 'proxy' ? ['GET'] : [],
+    methods: ['GET'],
     matchKind: 'contains',
     urlPattern: '',
-    source: kind === 'proxy'
-      ? 'function onRequest(ctx) {\n  return {};\n}\n\nfunction onResponse(ctx) {\n  return {};\n}'
-      : '',
-    kind,
-    platform: kind === 'injection' ? 'android' : null,
-    builtin: false,
+    source: 'function onRequest(ctx) {\n  return {};\n}\n\nfunction onResponse(ctx) {\n  return {};\n}',
     createdAt: ''
   }
-}
-
-function switchKind(kind: ScriptKind) {
-  activeKind.value = kind
-  selectedId.value = null
-  editing.value = false
 }
 
 function edit(script: ProxyScript) {
@@ -55,13 +42,13 @@ function edit(script: ProxyScript) {
 }
 
 function createScript() {
-  Object.assign(draft, emptyScript(activeKind.value))
+  Object.assign(draft, emptyScript())
   selectedId.value = null
   editing.value = true
 }
 
 function save() {
-  if (!draft.name.trim() || !draft.source.trim() || draft.builtin) {
+  if (!draft.name.trim() || !draft.source.trim()) {
     return
   }
   emit('save', { ...draft, methods: [...draft.methods] })
@@ -73,7 +60,7 @@ function save() {
     <header class="script-header">
       <div>
         <h1 id="scripts-title">JavaScript 脚本</h1>
-        <p>代理脚本运行在隔离 QuickJS 环境；注入脚本由外部 Frida 执行。</p>
+        <p>代理脚本运行在隔离 QuickJS 环境。</p>
       </div>
       <button type="button" class="primary-action" aria-label="新建脚本" @click="createScript">
         <Plus :size="15" />
@@ -81,36 +68,25 @@ function save() {
       </button>
     </header>
 
-    <div class="script-tabs" role="tablist" aria-label="脚本类型">
-      <button type="button" role="tab" :aria-selected="activeKind === 'proxy'" @click="switchKind('proxy')">
-        代理脚本
-      </button>
-      <button type="button" role="tab" :aria-selected="activeKind === 'injection'" @click="switchKind('injection')">
-        注入脚本
-      </button>
-    </div>
-
     <div class="script-body">
       <aside class="script-list" aria-label="脚本列表">
-        <div v-if="!visibleScripts.length" class="empty-state">
+        <div v-if="!scripts.length" class="empty-state">
           <Braces :size="26" />
-          <span>暂无{{ activeKind === 'proxy' ? '代理' : '注入' }}脚本</span>
+          <span>暂无代理脚本</span>
         </div>
-        <article v-for="script in visibleScripts" :key="script.id" :class="{ selected: selectedId === script.id }">
+        <article v-for="script in scripts" :key="script.id" :class="{ selected: selectedId === script.id }">
           <label class="script-toggle" :title="script.enabled ? '停用脚本' : '启用脚本'">
             <input
               type="checkbox"
               :checked="script.enabled"
-              :disabled="script.builtin"
               @change="emit('toggle', script.id, ($event.target as HTMLInputElement).checked)"
             />
           </label>
           <button type="button" class="script-name" :aria-label="`编辑 ${script.name}`" @click="edit(script)">
             <strong>{{ script.name }}</strong>
-            <small>{{ script.builtin ? '内置' : script.urlPattern || script.platform || '全部流量' }}</small>
+            <small>{{ script.urlPattern || '全部流量' }}</small>
           </button>
           <button
-            v-if="!script.builtin"
             type="button"
             class="icon-button"
             :aria-label="`删除 ${script.name}`"
@@ -125,20 +101,18 @@ function save() {
         <div class="editor-heading">
           <div>
             <h2>{{ draft.id ? '编辑脚本' : '新建脚本' }}</h2>
-            <span v-if="draft.builtin" class="readonly-badge">内置脚本只读</span>
           </div>
           <div class="editor-actions">
             <button
-              v-if="draft.kind === 'proxy'"
               type="button"
-              :disabled="busy || draft.builtin"
+              :disabled="busy"
               aria-label="测试脚本"
               @click="emit('test', { ...draft })"
             >
               <Play :size="14" />
               测试
             </button>
-            <button type="submit" :disabled="busy || draft.builtin || !draft.name.trim() || !draft.source.trim()" aria-label="保存脚本">
+            <button type="submit" :disabled="busy || !draft.name.trim() || !draft.source.trim()" aria-label="保存脚本">
               <Save :size="14" />
               保存
             </button>
@@ -148,30 +122,23 @@ function save() {
         <div class="script-fields">
           <label>
             <span>名称</span>
-            <input v-model.trim="draft.name" aria-label="脚本名称" :readonly="draft.builtin" required />
+            <input v-model.trim="draft.name" aria-label="脚本名称" required />
           </label>
-          <label v-if="draft.kind === 'proxy'">
+          <label>
             <span>方法</span>
-            <select v-model="draft.methods[0]" aria-label="请求方法" :disabled="draft.builtin">
+            <select v-model="draft.methods[0]" aria-label="请求方法">
               <option v-for="method in ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'ALL']" :key="method" :value="method === 'ALL' ? '' : method">
                 {{ method }}
               </option>
             </select>
           </label>
-          <label v-if="draft.kind === 'proxy'" class="wide-field">
+          <label class="wide-field">
             <span>URL 匹配</span>
-            <input v-model="draft.urlPattern" aria-label="URL 匹配内容" :readonly="draft.builtin" placeholder="/api" />
-          </label>
-          <label v-else>
-            <span>平台</span>
-            <select v-model="draft.platform" aria-label="注入平台" :disabled="draft.builtin">
-              <option value="android">Android</option>
-              <option value="ios">iOS</option>
-            </select>
+            <input v-model="draft.urlPattern" aria-label="URL 匹配内容" placeholder="/api" />
           </label>
         </div>
 
-        <BodyEditor v-model="draft.source" language="javascript" ariaLabel="脚本源码" :read-only="draft.builtin" />
+        <BodyEditor v-model="draft.source" language="javascript" ariaLabel="脚本源码" />
 
         <div v-if="testResult" class="test-result" role="status">
           <strong>{{ testResult.errors.length ? '执行失败' : '执行成功' }}</strong>
@@ -193,14 +160,13 @@ function save() {
   display: grid;
   min-width: 0;
   min-height: 0;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
   background: var(--surface);
 }
 
 .script-header,
 .editor-heading,
-.editor-actions,
-.script-tabs {
+.editor-actions {
   display: flex;
   align-items: center;
 }
@@ -245,37 +211,16 @@ function save() {
   color: var(--on-accent);
 }
 
-.script-tabs {
-  height: 39px;
-  padding: 0 16px;
-  gap: 4px;
-  border-bottom: 1px solid var(--border);
-}
-
-.script-tabs button {
-  height: 28px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: var(--radius-control);
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: var(--font-size-sm);
-}
-
-.script-tabs button[aria-selected='true'] {
-  background: var(--surface-hover);
-  color: var(--accent-strong);
-  font-weight: 700;
-}
-
 .script-body {
   display: grid;
+  min-width: 0;
   min-height: 0;
   grid-template-columns: 260px minmax(0, 1fr);
 }
 
 .script-list {
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
   border-right: 1px solid var(--border);
 }
@@ -340,13 +285,9 @@ function save() {
   gap: 7px;
 }
 
-.readonly-badge {
-  color: var(--text-muted);
-  font-size: var(--font-size-xs);
-}
-
 .script-fields {
   display: grid;
+  min-width: 0;
   grid-template-columns: minmax(160px, 1fr) 110px minmax(200px, 1.5fr);
   gap: 10px;
 }
@@ -396,5 +337,19 @@ function save() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .script-body {
+    grid-template-columns: 180px minmax(0, 1fr);
+  }
+
+  .script-fields {
+    grid-template-columns: minmax(0, 1fr) 110px;
+  }
+
+  .wide-field {
+    grid-column: 1 / -1;
+  }
 }
 </style>

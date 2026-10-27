@@ -36,7 +36,6 @@ pub enum DiagnosticScope {
     Replay,
     Script,
     Network,
-    Pinning,
     System,
 }
 
@@ -181,13 +180,6 @@ pub enum MatchKind {
     Regex,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum ScriptKind {
-    Proxy,
-    Injection,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProxyScript {
@@ -200,11 +192,6 @@ pub struct ProxyScript {
     pub match_kind: MatchKind,
     pub url_pattern: String,
     pub source: String,
-    pub kind: ScriptKind,
-    #[serde(default)]
-    pub platform: Option<String>,
-    #[serde(default)]
-    pub builtin: bool,
     pub created_at: String,
 }
 
@@ -234,69 +221,6 @@ pub struct NetworkProfile {
     #[serde(default)]
     pub builtin: bool,
     pub created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct FridaDevice {
-    pub id: String,
-    pub kind: String,
-    pub name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct FridaApplication {
-    pub pid: Option<u32>,
-    pub name: String,
-    pub identifier: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct FridaEnvironmentStatus {
-    pub available: bool,
-    pub version: Option<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum PinningLaunchMode {
-    Spawn,
-    Attach,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct PinningSessionConfig {
-    pub device_id: String,
-    pub target: String,
-    pub mode: PinningLaunchMode,
-    #[serde(default)]
-    pub script_ids: Vec<String>,
-    #[serde(default)]
-    pub gadget_address: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct PinningSessionStatus {
-    pub state: String,
-    pub target: Option<String>,
-    pub process_id: Option<u32>,
-    pub error: Option<String>,
-}
-
-impl Default for PinningSessionStatus {
-    fn default() -> Self {
-        Self {
-            state: "stopped".into(),
-            target: None,
-            process_id: None,
-            error: None,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -29,9 +29,9 @@ watch(() => open, (value) => {
       <h1 id="disclaimer-title">授权使用声明</h1>
       <p class="lead">{{ APP_BRAND.name }} 仅用于您拥有或已获得明确授权的应用、服务和接口调试。</p>
       <div class="statement">
-        <p>未经授权抓取、拦截、篡改或注入第三方应用和网络流量，可能违反网络安全和个人信息保护相关法律法规。</p>
-        <p>SSL Pinning、Frida 注入和 JavaScript 脚本仅用于自有或明确授权目标；脚本只保存在本机，不会上传或联网获取。</p>
-        <p>本工具不自动安装 Frida，不部署设备端组件，也不提供 APK/IPA 重打包、重签名或脱壳能力。</p>
+        <p>未经授权抓取、拦截或篡改第三方网络流量，可能违反网络安全和个人信息保护相关法律法规。</p>
+        <p>QuickJS 代理脚本仅用于自有或明确授权的网络流量调试；脚本只保存在本机，不会上传或联网获取。</p>
+        <p>本工具不提供证书固定绕过或代码注入能力。</p>
       </div>
       <label class="acknowledgement">
         <input v-model="acknowledged" type="checkbox" />

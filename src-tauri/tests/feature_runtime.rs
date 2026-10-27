@@ -1,6 +1,5 @@
 use netcat_lib::{
-    frida::{parse_applications, parse_devices},
-    models::{MatchKind, NetworkProfile, NetworkProfileKind, ProxyScript, ScriptKind},
+    models::{MatchKind, NetworkProfile, NetworkProfileKind, ProxyScript},
     network::{builtin_network_profiles, NetworkConditioner, NetworkFailure, TransferDirection},
     script::{validate_script_source, PipelineRequest, PipelineResponse, ScriptEngine},
     storage::Store,
@@ -17,9 +16,6 @@ fn proxy_script() -> ProxyScript {
         match_kind: MatchKind::Contains,
         url_pattern: "/api".into(),
         source: "function onRequest(ctx) { return { url: ctx.url + '?debug=1' }; }".into(),
-        kind: ScriptKind::Proxy,
-        platform: None,
-        builtin: false,
         created_at: "2026-10-26T10:00:00Z".into(),
     }
 }
@@ -91,24 +87,6 @@ fn chrome_network_presets_have_stable_transport_values() {
         (Some(750), Some(250), 100)
     );
     assert_eq!(offline.timeout_percent, 100);
-}
-
-#[test]
-fn frida_output_parsers_ignore_headers_and_preserve_identifiers() {
-    let devices = parse_devices(
-        "Id             Type    Name\nlocal          local   Local System\nusb-001        usb     Pixel 8\ngadget-01      remote  Gadget\n",
-    );
-    assert_eq!(devices.len(), 3);
-    assert_eq!(devices[1].id, "usb-001");
-    assert_eq!(devices[1].name, "Pixel 8");
-
-    let applications = parse_applications(
-        "PID   Name                 Identifier\n1234  Demo App             com.example.demo\n-     Waiting App          com.example.waiting\n",
-    );
-    assert_eq!(applications.len(), 2);
-    assert_eq!(applications[0].pid, Some(1234));
-    assert_eq!(applications[1].pid, None);
-    assert_eq!(applications[1].identifier, "com.example.waiting");
 }
 
 #[test]
@@ -223,9 +201,9 @@ fn scripts_can_short_circuit_requests_and_rewrite_responses() {
 }
 
 #[test]
-fn script_validation_rejects_invalid_javascript_without_executing_frida_globals() {
+fn script_validation_rejects_invalid_javascript_without_executing_top_level_code() {
     assert!(validate_script_source("function onRequest(ctx) { return {}; }").is_ok());
-    assert!(validate_script_source("Java.perform(function () { return true; });").is_ok());
+    assert!(validate_script_source("throw new Error('must not execute');").is_ok());
     assert!(validate_script_source("function broken( {").is_err());
 }
 

@@ -4,7 +4,6 @@ pub mod ca;
 pub mod diagnostics;
 pub mod error;
 pub mod export;
-pub mod frida;
 pub mod migration;
 pub mod models;
 pub mod network;

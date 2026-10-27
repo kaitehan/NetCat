@@ -81,7 +81,7 @@ export interface TrafficDetail extends TrafficSummary {
 
 export type DiagnosticLevel = 'info' | 'warn' | 'error'
 
-export type DiagnosticScope = 'proxy' | 'mock' | 'replay' | 'script' | 'network' | 'pinning' | 'system'
+export type DiagnosticScope = 'proxy' | 'mock' | 'replay' | 'script' | 'network' | 'system'
 
 export interface DiagnosticLog {
   timestamp: string
@@ -148,8 +148,6 @@ export interface ReplayResult {
 
 export type MatchKind = 'exact' | 'contains' | 'regex'
 
-export type ScriptKind = 'proxy' | 'injection'
-
 export interface ProxyScript {
   id: string
   name: string
@@ -159,9 +157,6 @@ export interface ProxyScript {
   matchKind: MatchKind
   urlPattern: string
   source: string
-  kind: ScriptKind
-  platform: string | null
-  builtin: boolean
   createdAt: string
 }
 
@@ -198,41 +193,6 @@ export interface ScriptTestResult {
     headers: Readonly<Record<string, string>>
     bodyText: string
   }
-}
-
-export interface FridaEnvironmentStatus {
-  available: boolean
-  version: string | null
-  error: string | null
-}
-
-export interface FridaDevice {
-  id: string
-  kind: string
-  name: string
-}
-
-export interface FridaApplication {
-  pid: number | null
-  name: string
-  identifier: string
-}
-
-export type PinningLaunchMode = 'spawn' | 'attach'
-
-export interface PinningSessionConfig {
-  deviceId: string
-  target: string
-  mode: PinningLaunchMode
-  scriptIds: readonly string[]
-  gadgetAddress: string | null
-}
-
-export interface PinningSessionStatus {
-  state: 'stopped' | 'running' | 'error'
-  target: string | null
-  processId: number | null
-  error: string | null
 }
 
 export interface MockRule {
