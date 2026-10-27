@@ -5,6 +5,8 @@ import AppSidebar from './components/AppSidebar.vue'
 import FilterSelect from './components/FilterSelect.vue'
 import TopToolbar from './components/TopToolbar.vue'
 import DisclaimerDialog from './features/onboarding/DisclaimerDialog.vue'
+import SupportChatPanel from './features/support/SupportChatPanel.vue'
+import SupportLauncher from './features/support/SupportLauncher.vue'
 import { sanitizeTrafficDetail } from './features/diagnostics/debug-bridge'
 import TrafficContextMenu, { type TrafficMenuAction } from './features/traffic/TrafficContextMenu.vue'
 import DeviceTabs from './features/traffic/DeviceTabs.vue'
@@ -54,6 +56,7 @@ const contextRow = shallowRef<TrafficSummary | null>(null)
 const contextDetail = shallowRef<TrafficDetail | null>(null)
 const contextPosition = reactive({ x: 0, y: 0 })
 const diagnosticsOpen = shallowRef(false)
+const supportOpen = shallowRef(false)
 const networkEditorOpen = shallowRef(false)
 const diagnosticDetail = shallowRef<DiagnosticTrafficDetail | null>(null)
 const diagnosticDetailLoading = shallowRef(false)
@@ -577,6 +580,14 @@ onMounted(() => void capture.initialize())
       @clear-logs="capture.clearDiagnosticLogs"
       @select-traffic="selectDiagnosticTraffic"
     />
+
+    <SupportLauncher v-if="!supportOpen" @open="supportOpen = true" />
+
+    <SupportChatPanel
+      v-else
+      id="support-chat-panel"
+      @close="supportOpen = false"
+    />
   </div>
 </template>
 
@@ -794,10 +805,10 @@ onMounted(() => void capture.initialize())
 .error-banner {
   position: fixed;
   z-index: 90;
-  right: 18px;
+  right: 74px;
   bottom: 38px;
   display: flex;
-  width: min(430px, calc(100vw - 36px));
+  width: min(430px, calc(100vw - 92px));
   padding: 12px 13px;
   align-items: start;
   justify-content: space-between;
@@ -837,7 +848,7 @@ onMounted(() => void capture.initialize())
 .toast {
   position: fixed;
   z-index: 95;
-  right: 18px;
+  right: 74px;
   bottom: 38px;
   min-height: 32px;
   padding: 0 12px;

@@ -597,4 +597,24 @@ describe('App', () => {
     expect(unlisten).toHaveBeenCalled()
     warn.mockRestore()
   })
+
+  it('opens and closes the support overlay without unmounting the workspace', async () => {
+    localStorage.removeItem('netcat-support-conversations:v1')
+    const { container } = renderWithApi(windowsApi())
+
+    const trigger = await screen.findByRole('button', { name: '打开智奈助手' })
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByTestId('support-trigger-icon')).toHaveAttribute('src', '/src-tauri/icons/icon.png')
+    expect(screen.getByTestId('support-trigger-icon')).toHaveAttribute('alt', '')
+    expect(container.querySelector('.app-shell')).toBeInTheDocument()
+
+    await fireEvent.click(trigger)
+    expect(screen.getByRole('complementary', { name: '智奈助手' })).toBeVisible()
+    expect(screen.queryByRole('button', { name: '打开智奈助手' })).not.toBeInTheDocument()
+    expect(container.querySelector('.app-shell')).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: '关闭智奈助手' }))
+    expect(screen.queryByRole('complementary', { name: '智奈助手' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '打开智奈助手' })).toHaveAttribute('aria-expanded', 'false')
+  })
 })
