@@ -42,6 +42,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "resources": ["../resources/harness/"],
     "macOS": {
       "minimumSystemVersion": "12.0"
     }

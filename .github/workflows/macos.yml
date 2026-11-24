@@ -1,0 +1,66 @@
+name: macOS
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Require Apple Silicon runner
+        run: test "$(uname -m)" = "arm64"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.3
+          cache: npm
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify Harness sources
+        run: npm run harness:verify
+
+      - name: Build embedded Harness Runtime
+        run: npm run harness:bundle
+
+      - name: Smoke embedded Harness Runtime
+        run: npm run harness:smoke
+
+      - name: Test frontend
+        run: npm test
+
+      - name: Build frontend and check size budget
+        run: npm run build:budget
+
+      - name: Test Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
+      - name: Build DMG
+        run: npm run tauri -- build --bundles dmg
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: netcat-macos-arm64-dmg
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+
+      - name: Upload Harness manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: netcat-harness-macos-arm64-manifest
+          path: resources/harness/manifest.json
+          if-no-files-found: error

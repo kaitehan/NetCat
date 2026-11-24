@@ -1,5 +1,7 @@
 node_modules/
 dist/
+harness/dist/
+resources/harness/
 src-tauri/target/
 .DS_Store
 *.log

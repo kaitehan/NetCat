@@ -18,7 +18,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.22.3
           cache: npm
 
       - name: Set up Rust MSVC toolchain
@@ -28,6 +28,15 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm ci
+
+      - name: Verify Harness sources
+        run: npm run harness:verify
+
+      - name: Build embedded Harness Runtime
+        run: npm run harness:bundle
+
+      - name: Smoke embedded Harness Runtime
+        run: npm run harness:smoke
 
       - name: Test frontend
         run: npm test
@@ -46,4 +55,11 @@ jobs:
         with:
           name: netcat-windows-x86_64-nsis
           path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+          if-no-files-found: error
+
+      - name: Upload Harness manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: netcat-harness-windows-x64-manifest
+          path: resources/harness/manifest.json
           if-no-files-found: error

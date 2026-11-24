@@ -1,0 +1,3 @@
+- insert:
+    - id: netcat-tools
+      name: '@netcat/dsh-plugin'

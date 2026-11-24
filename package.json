@@ -4,6 +4,11 @@
   "version": "0.5.0",
   "author": "kaite han",
   "type": "module",
+  "workspaces": [
+    "harness/bridge",
+    "harness/plugin-netcat",
+    "harness/profile"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
@@ -11,7 +16,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "tauri": "tauri",
-    "tauri:build:windows": "tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json"
+    "tauri:build:windows": "tauri build --target x86_64-pc-windows-msvc --bundles nsis --config src-tauri/tauri.windows.conf.json",
+    "harness:test": "node --test harness/tests/*.test.ts",
+    "harness:build": "tsc -p harness/tsconfig.json",
+    "harness:verify": "npm run harness:test && npm run harness:build",
+    "harness:bundle": "npm run harness:build && node harness/scripts/build-runtime.mjs",
+    "harness:smoke": "npm run harness:build && node harness/scripts/smoke-runtime.mjs"
   },
   "dependencies": {
     "@lucide/vue": "^1.61.0",

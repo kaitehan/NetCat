@@ -1,0 +1,10 @@
+{
+  "name": "@netcat/harness-bridge",
+  "private": true,
+  "version": "0.6.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "dependencies": {
+    "@deepseek-ai/dsh-sdk-client": "0.2.3-alpha.2"
+  }
+}
