@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, shallowRef, watch } from 'vue'
-import { Clipboard, Clock3, FileWarning, MousePointer2 } from '@lucide/vue'
+import { Clipboard, Clock3, FileWarning, MousePointer2, Sparkles } from '@lucide/vue'
 import BodyEditor from '../../components/BodyEditor.vue'
 import { bodyEditorPolicy } from '../../components/body-editor-policy'
 import type { TrafficDetail } from '../../shared/types'
@@ -11,6 +11,7 @@ const { detail } = defineProps<{
 
 const emit = defineEmits<{
   copyCurl: [id: string]
+  analyze: [id: string]
 }>()
 
 type InspectorTab = 'request' | 'response' | 'timing' | 'hex'
@@ -74,10 +75,16 @@ function formatHex(body: readonly number[]): string {
           <span class="method">{{ detail.method }}</span>
           <strong>{{ detail.host }}</strong>
         </div>
-        <button type="button" class="copy-button" @click="emit('copyCurl', detail.id)">
-          <Clipboard :size="14" />
-          复制 cURL
-        </button>
+        <div class="summary-actions">
+          <button type="button" class="summary-action" @click="emit('analyze', detail.id)">
+            <Sparkles :size="14" />
+            让智奈分析
+          </button>
+          <button type="button" class="summary-action" @click="emit('copyCurl', detail.id)">
+            <Clipboard :size="14" />
+            复制 cURL
+          </button>
+        </div>
         <p>{{ detail.url }}</p>
         <div class="summary-meta">
           <span>{{ detail.status ?? 'ERR' }}</span>
@@ -241,10 +248,15 @@ function formatHex(body: readonly number[]): string {
   font-weight: 700;
 }
 
-.copy-button {
+.summary-actions {
   position: absolute;
   top: 13px;
   right: 12px;
+  display: flex;
+  gap: 6px;
+}
+
+.summary-action {
   display: inline-flex;
   height: 28px;
   align-items: center;
@@ -260,7 +272,7 @@ function formatHex(body: readonly number[]): string {
 
 .summary-header {
   position: relative;
-  padding-right: 104px;
+  padding-right: 226px;
 }
 
 .tab-list {

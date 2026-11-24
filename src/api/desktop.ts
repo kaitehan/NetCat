@@ -5,6 +5,12 @@ import { writeText } from '@tauri-apps/plugin-clipboard-manager'
 import { save } from '@tauri-apps/plugin-dialog'
 import type {
   AppError,
+  AssistantConversation,
+  AssistantInput,
+  AssistantSnapshot,
+  AssistantSettings,
+  AssistantProvider,
+  AssistantCredentialDescription,
   CaStatus,
   CertificateTrustState,
   CertificateTrustDetails,
@@ -37,6 +43,8 @@ export type DesktopEvent =
   | 'diagnostic-log'
   | 'paired-devices-changed'
   | 'network-profile-changed'
+  | 'assistant-runtime-status'
+  | 'assistant-session-event'
 
 export interface DesktopApi {
   getPlatformInfo(): Promise<PlatformInfo>
@@ -95,6 +103,30 @@ export interface DesktopApi {
   hasAcceptedDisclaimer(): Promise<boolean>
   acceptDisclaimer(): Promise<void>
   openDevtools(): Promise<void>
+  listAssistantConversations(): Promise<AssistantConversation[]>
+  createAssistantConversation(): Promise<AssistantConversation>
+  getAssistantSnapshot(conversationId: string): Promise<AssistantSnapshot>
+  renameAssistantConversation(conversationId: string, title: string): Promise<AssistantConversation>
+  hideAssistantConversation(conversationId: string): Promise<void>
+  submitAssistantInput(conversationId: string, input: AssistantInput): Promise<AssistantSnapshot>
+  authorizeAssistantNetworkRequest(conversationId: string): Promise<string>
+  executeAssistantNetworkRequest(conversationId: string, requestHandle: string): Promise<AssistantSnapshot>
+  resolveAssistantDraft(conversationId: string, draftId: string, status: 'accepted' | 'rejected'): Promise<AssistantSnapshot>
+  stopAssistant(): Promise<void>
+  restartAssistant(): Promise<void>
+  getAssistantSettings(): Promise<AssistantSettings>
+  saveAssistantSettings(
+    provider: AssistantProvider,
+    model: string,
+    openAiProvider?: string,
+    openAiBaseUrl?: string,
+    openAiApi?: AssistantSettings['openAiApi']
+  ): Promise<AssistantSettings>
+  testAssistantConnection(): Promise<string>
+  describeAssistantCredential(provider: AssistantProvider): Promise<AssistantCredentialDescription>
+  saveAssistantCredential(provider: AssistantProvider, value: string): Promise<AssistantCredentialDescription>
+  deleteAssistantCredential(provider: AssistantProvider): Promise<AssistantCredentialDescription>
+  validateAssistantCredential(provider: AssistantProvider): Promise<AssistantCredentialDescription>
   listen<T>(event: DesktopEvent, handler: (payload: T) => void): Promise<UnlistenFn>
 }
 
@@ -173,6 +205,16 @@ const browserNetworkProfiles: NetworkProfile[] = [
   { id: 'offline', name: '离线', kind: 'preset', latencyMs: 0, jitterMs: 0, downloadKbps: null, uploadKbps: null, timeoutPercent: 100, disconnectPercent: 0, methods: [], matchKind: 'contains', urlPattern: '', builtin: true, createdAt: '2026-10-26T00:00:00Z' }
 ]
 let browserActiveNetworkProfile: string | null = null
+const browserAssistantConversations: AssistantConversation[] = []
+const browserAssistantSnapshots = new Map<string, AssistantSnapshot>()
+let browserAssistantSettings: AssistantSettings = {
+  provider: 'deepSeek',
+  model: 'deepseek-official/deepseek-v4-flash',
+  openAiProvider: 'openai',
+  openAiBaseUrl: 'https://api.openai.com/v1',
+  openAiApi: 'openai-responses'
+}
+const browserAssistantCredentials = new Set<AssistantProvider>()
 
 const browserMocks: MockRule[] = [
   {
@@ -504,6 +546,123 @@ const browserApi: DesktopApi = {
       action: '请使用浏览器自带的开发者工具'
     } satisfies AppError
   },
+  async listAssistantConversations() {
+    return [...browserAssistantConversations]
+      .filter((conversation) => !conversation.hidden)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+  },
+  async createAssistantConversation() {
+    const timestamp = new Date().toISOString()
+    const conversation: AssistantConversation = {
+      id: crypto.randomUUID(),
+      sessionId: crypto.randomUUID(),
+      title: '新对话',
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      hidden: false
+    }
+    browserAssistantConversations.push(conversation)
+    browserAssistantSnapshots.set(conversation.id, {
+      conversation,
+      messages: [],
+      activities: [],
+      drafts: [],
+      status: 'ready'
+    })
+    return conversation
+  },
+  async getAssistantSnapshot(conversationId) {
+    const snapshot = browserAssistantSnapshots.get(conversationId)
+    if (!snapshot) throw { code: 'NOT_FOUND', message: '未找到智奈会话' } satisfies AppError
+    return snapshot
+  },
+  async renameAssistantConversation(conversationId, title) {
+    const conversation = browserAssistantConversations.find((item) => item.id === conversationId)
+    if (!conversation) throw { code: 'NOT_FOUND', message: '未找到智奈会话' } satisfies AppError
+    conversation.title = title
+    conversation.updatedAt = new Date().toISOString()
+    const snapshot = browserAssistantSnapshots.get(conversationId)
+    if (snapshot) browserAssistantSnapshots.set(conversationId, { ...snapshot, conversation })
+    return conversation
+  },
+  async hideAssistantConversation(conversationId) {
+    const conversation = browserAssistantConversations.find((item) => item.id === conversationId)
+    if (conversation) conversation.hidden = true
+  },
+  async submitAssistantInput(conversationId, input) {
+    const snapshot = await this.getAssistantSnapshot(conversationId)
+    const timestamp = new Date().toISOString()
+    const content = input.kind === 'message'
+      ? input.message
+      : input.kind === 'curl'
+        ? input.curl
+        : `分析抓包 ${input.exchangeId}`
+    const messages = [
+      ...snapshot.messages,
+      { id: crypto.randomUUID(), role: 'user' as const, content, createdAt: timestamp },
+      {
+        id: crypto.randomUUID(),
+        role: 'assistant' as const,
+        content: '浏览器预览模式已记录请求；桌面应用将由内置 Runtime 完成分析。',
+        createdAt: timestamp
+      }
+    ]
+    const next = { ...snapshot, messages, status: 'completed' as const }
+    browserAssistantSnapshots.set(conversationId, next)
+    return next
+  },
+  async authorizeAssistantNetworkRequest() {
+    return crypto.randomUUID()
+  },
+  async executeAssistantNetworkRequest(conversationId) {
+    const snapshot = await this.getAssistantSnapshot(conversationId)
+    const next = { ...snapshot, status: 'completed' as const }
+    browserAssistantSnapshots.set(conversationId, next)
+    return next
+  },
+  async resolveAssistantDraft(conversationId, draftId, status) {
+    const snapshot = await this.getAssistantSnapshot(conversationId)
+    const next = {
+      ...snapshot,
+      drafts: snapshot.drafts.map((draft) => draft.id === draftId ? { ...draft, status } : draft)
+    }
+    browserAssistantSnapshots.set(conversationId, next)
+    return next
+  },
+  async stopAssistant() {},
+  async restartAssistant() {},
+  async getAssistantSettings() {
+    return browserAssistantSettings
+  },
+  async saveAssistantSettings(provider, model, openAiProvider, openAiBaseUrl, openAiApi) {
+    browserAssistantSettings = {
+      provider,
+      model,
+      openAiProvider: openAiProvider ?? browserAssistantSettings.openAiProvider,
+      openAiBaseUrl: openAiBaseUrl ?? browserAssistantSettings.openAiBaseUrl,
+      openAiApi: openAiApi ?? browserAssistantSettings.openAiApi
+    }
+    return browserAssistantSettings
+  },
+  async testAssistantConnection() {
+    return `连接成功，模型 ${browserAssistantSettings.model} 可用。`
+  },
+  async describeAssistantCredential(provider) {
+    const configured = browserAssistantCredentials.has(provider)
+    return { provider, configured, maskedValue: configured ? '********' : null }
+  },
+  async saveAssistantCredential(provider, value) {
+    if (!value.trim()) throw { code: 'ASSISTANT_CREDENTIAL_EMPTY', message: 'API Key 不能为空' } satisfies AppError
+    browserAssistantCredentials.add(provider)
+    return { provider, configured: true, maskedValue: '********' }
+  },
+  async deleteAssistantCredential(provider) {
+    browserAssistantCredentials.delete(provider)
+    return { provider, configured: false, maskedValue: null }
+  },
+  async validateAssistantCredential(provider) {
+    return this.describeAssistantCredential(provider)
+  },
   async listen() {
     return () => undefined
   }
@@ -587,6 +746,30 @@ const tauriApi: DesktopApi = {
   hasAcceptedDisclaimer: () => invoke('has_accepted_disclaimer'),
   acceptDisclaimer: () => invoke('accept_disclaimer'),
   openDevtools: () => invoke('open_devtools'),
+  listAssistantConversations: () => invoke('list_assistant_conversations'),
+  createAssistantConversation: () => invoke('create_assistant_conversation'),
+  getAssistantSnapshot: (conversationId) => invoke('get_assistant_snapshot', { conversationId }),
+  renameAssistantConversation: (conversationId, title) => invoke('rename_assistant_conversation', { conversationId, title }),
+  hideAssistantConversation: (conversationId) => invoke('hide_assistant_conversation', { conversationId }),
+  submitAssistantInput: (conversationId, input) => invoke('submit_assistant_input', { conversationId, input }),
+  authorizeAssistantNetworkRequest: (conversationId) => invoke('authorize_assistant_network_request', { conversationId }),
+  executeAssistantNetworkRequest: (conversationId, requestHandle) => invoke('execute_assistant_network_request', { conversationId, requestHandle }),
+  resolveAssistantDraft: (conversationId, draftId, status) => invoke('resolve_assistant_draft', { conversationId, draftId, status }),
+  stopAssistant: () => invoke('stop_assistant'),
+  restartAssistant: () => invoke('restart_assistant'),
+  getAssistantSettings: () => invoke('get_assistant_settings'),
+  saveAssistantSettings: (provider, model, openAiProvider, openAiBaseUrl, openAiApi) => invoke('save_assistant_settings', {
+    provider,
+    model,
+    openAiProvider,
+    openAiBaseUrl,
+    openAiApi
+  }),
+  testAssistantConnection: () => invoke('test_assistant_connection'),
+  describeAssistantCredential: (provider) => invoke('describe_assistant_credential', { provider }),
+  saveAssistantCredential: (provider, value) => invoke('save_assistant_credential', { provider, value }),
+  deleteAssistantCredential: (provider) => invoke('delete_assistant_credential', { provider }),
+  validateAssistantCredential: (provider) => invoke('validate_assistant_credential', { provider }),
   async listen<T>(event: DesktopEvent, handler: (payload: T) => void) {
     return tauriListen<T>(event, ({ payload }) => handler(payload))
   }

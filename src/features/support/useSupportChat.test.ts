@@ -1,91 +1,198 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import { SUPPORT_CHAT_STORAGE_KEY, type SupportChatState } from './support-chat-storage'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { AssistantConversation, AssistantSnapshot } from '../../shared/types'
 import { useSupportChat } from './useSupportChat'
 
-function ids(...values: string[]) {
-  let index = 0
-  return () => values[index++] ?? `generated-${index}`
+const conversation: AssistantConversation = {
+  id: 'conversation-1',
+  sessionId: 'session-1',
+  title: 'HTTPS 诊断',
+  createdAt: '2026-11-24T10:00:00Z',
+  updatedAt: '2026-11-24T10:00:00Z',
+  hidden: false
+}
+
+const snapshot: AssistantSnapshot = {
+  conversation,
+  messages: [{
+    id: 'message-1',
+    role: 'assistant',
+    content: '请提供需要分析的请求。',
+    createdAt: '2026-11-24T10:00:01Z'
+  }],
+  activities: [],
+  drafts: [],
+  status: 'ready'
+}
+
+function assistantApi() {
+  return {
+    listAssistantConversations: vi.fn().mockResolvedValue([conversation]),
+    createAssistantConversation: vi.fn().mockResolvedValue(conversation),
+    getAssistantSnapshot: vi.fn().mockResolvedValue(snapshot),
+    renameAssistantConversation: vi.fn().mockImplementation(async (_id: string, title: string) => ({
+      ...conversation,
+      title
+    })),
+    hideAssistantConversation: vi.fn().mockResolvedValue(undefined),
+    authorizeAssistantNetworkRequest: vi.fn().mockResolvedValue('single-use-handle'),
+    executeAssistantNetworkRequest: vi.fn().mockResolvedValue({
+      ...snapshot,
+      status: 'completed'
+    }),
+    saveMockRule: vi.fn().mockImplementation(async (rule) => rule),
+    saveScript: vi.fn().mockImplementation(async (script) => script),
+    resolveAssistantDraft: vi.fn().mockResolvedValue(snapshot),
+    submitAssistantInput: vi.fn().mockImplementation(async () => ({
+      ...snapshot,
+      messages: [
+        ...snapshot.messages,
+        { id: 'message-2', role: 'user', content: '分析这个请求', createdAt: '2026-11-24T10:01:00Z' }
+      ]
+    }))
+  }
 }
 
 describe('useSupportChat', () => {
-  beforeEach(() => localStorage.clear())
-
-  it('creates and persists a conversation from the first non-empty message', () => {
-    const chat = useSupportChat({
-      storage: localStorage,
-      now: () => '2026-10-27T10:00:00.000Z',
-      createId: ids('conversation-1', 'message-1')
-    })
-
-    expect(chat.sendMessage('   ')).toBe(false)
-    expect(chat.sendMessage('  为什么抓不到 HTTPS？\n请帮我看看  ')).toBe(true)
-
-    expect(chat.activeConversation.value).toMatchObject({
-      id: 'conversation-1',
-      title: '为什么抓不到 HTTPS？',
-      messages: [{ id: 'message-1', content: '为什么抓不到 HTTPS？\n请帮我看看' }]
-    })
-    const saved = JSON.parse(localStorage.getItem(SUPPORT_CHAT_STORAGE_KEY) ?? '{}') as SupportChatState
-    expect(saved.activeConversationId).toBe('conversation-1')
-    expect(saved.conversations).toHaveLength(1)
+  beforeEach(() => {
+    localStorage.clear()
+    vi.restoreAllMocks()
   })
 
-  it('sorts histories by update time and restores the active conversation', () => {
-    const state: SupportChatState = {
-      version: 1,
-      activeConversationId: 'older',
-      conversations: [
-        { id: 'older', title: '较早会话', createdAt: '2026-10-25T10:00:00.000Z', updatedAt: '2026-10-25T10:00:00.000Z', messages: [] },
-        { id: 'newer', title: '最近会话', createdAt: '2026-10-26T10:00:00.000Z', updatedAt: '2026-10-26T10:00:00.000Z', messages: [] }
-      ]
-    }
-    localStorage.setItem(SUPPORT_CHAT_STORAGE_KEY, JSON.stringify(state))
+  it('loads conversations and restores a snapshot without reading localStorage history', async () => {
+    localStorage.setItem('netcat-support-conversations:v1', '{invalid legacy history')
+    const storageRead = vi.spyOn(Storage.prototype, 'getItem')
+    const api = assistantApi()
+    const chat = useSupportChat({ api })
 
-    const chat = useSupportChat({ storage: localStorage })
+    await chat.load()
+    await chat.selectConversation('conversation-1')
 
-    expect(chat.conversations.value.map((conversation) => conversation.id)).toEqual(['newer', 'older'])
-    expect(chat.activeConversation.value?.id).toBe('older')
+    expect(storageRead).not.toHaveBeenCalled()
+    expect(api.listAssistantConversations).toHaveBeenCalledOnce()
+    expect(api.getAssistantSnapshot).toHaveBeenCalledWith('conversation-1')
+    expect(chat.activeConversation.value?.messages[0]?.content).toBe('请提供需要分析的请求。')
   })
 
-  it('switches, renames, creates a draft, and deletes conversations', () => {
-    const state: SupportChatState = {
-      version: 1,
-      activeConversationId: 'first',
-      conversations: [
-        { id: 'first', title: '第一个会话', createdAt: '2026-10-25T10:00:00.000Z', updatedAt: '2026-10-25T10:00:00.000Z', messages: [] },
-        { id: 'second', title: '第二个会话', createdAt: '2026-10-26T10:00:00.000Z', updatedAt: '2026-10-26T10:00:00.000Z', messages: [] }
-      ]
-    }
-    localStorage.setItem(SUPPORT_CHAT_STORAGE_KEY, JSON.stringify(state))
-    const chat = useSupportChat({ storage: localStorage })
+  it('creates a DSH session before submitting the first non-empty message', async () => {
+    const api = assistantApi()
+    api.listAssistantConversations.mockResolvedValue([])
+    const chat = useSupportChat({ api })
+    await chat.load()
 
-    chat.selectConversation('second')
-    chat.renameConversation('second', '  HTTPS 证书问题  ')
-    expect(chat.activeConversation.value?.title).toBe('HTTPS 证书问题')
+    expect(await chat.sendMessage('   ')).toBe(false)
+    expect(await chat.sendMessage('  分析这个请求  ')).toBe(true)
 
-    chat.newConversation()
+    expect(api.createAssistantConversation).toHaveBeenCalledOnce()
+    expect(api.submitAssistantInput).toHaveBeenCalledWith('conversation-1', {
+      kind: 'message',
+      message: '分析这个请求'
+    })
+    expect(chat.activeConversation.value?.messages.at(-1)?.content).toBe('分析这个请求')
+  })
+
+  it('submits pasted cURL as an offline curl input', async () => {
+    const api = assistantApi()
+    const chat = useSupportChat({ api })
+    await chat.load()
+    await chat.selectConversation('conversation-1')
+
+    expect(await chat.sendMessage('  curl https://api.example.com/users  ')).toBe(true)
+
+    expect(api.submitAssistantInput).toHaveBeenCalledWith('conversation-1', {
+      kind: 'curl',
+      curl: 'curl https://api.example.com/users'
+    })
+  })
+
+  it('authorizes and executes a pending network draft exactly once', async () => {
+    const api = assistantApi()
+    const chat = useSupportChat({ api })
+    await chat.load()
+    await chat.selectConversation('conversation-1')
+
+    expect(await chat.executeNetworkDraft()).toBe(true)
+
+    expect(api.authorizeAssistantNetworkRequest).toHaveBeenCalledWith('conversation-1')
+    expect(api.executeAssistantNetworkRequest).toHaveBeenCalledWith(
+      'conversation-1',
+      'single-use-handle'
+    )
+    expect(chat.status.value).toBe('completed')
+  })
+
+  it('renames and hides conversations through the desktop API', async () => {
+    const api = assistantApi()
+    const chat = useSupportChat({ api })
+    await chat.load()
+    await chat.selectConversation('conversation-1')
+
+    expect(await chat.renameConversation('conversation-1', '  登录失败  ')).toBe(true)
+    expect(chat.activeConversation.value?.title).toBe('登录失败')
+
+    await chat.deleteConversation('conversation-1')
+    expect(api.hideAssistantConversation).toHaveBeenCalledWith('conversation-1')
     expect(chat.activeConversation.value).toBeNull()
-
-    chat.selectConversation('first')
-    chat.deleteConversation('first')
-    expect(chat.activeConversation.value?.id).toBe('second')
-    expect(chat.conversations.value.map((conversation) => conversation.id)).toEqual(['second'])
+    expect(chat.conversations.value).toEqual([])
   })
 
-  it('keeps a sent message in memory when persistence fails', () => {
-    const storage = {
-      getItem: () => null,
-      setItem: () => { throw new DOMException('quota exceeded', 'QuotaExceededError') }
-    }
-    const chat = useSupportChat({
-      storage,
-      now: () => '2026-10-27T10:00:00.000Z',
-      createId: ids('conversation-1', 'message-1')
+  it('keeps existing content and exposes a retryable error when submission fails', async () => {
+    const api = assistantApi()
+    api.submitAssistantInput.mockRejectedValue({ code: 'ASSISTANT_RUNTIME_ERROR', message: 'Runtime 启动失败' })
+    const chat = useSupportChat({ api })
+    await chat.load()
+    await chat.selectConversation('conversation-1')
+
+    expect(await chat.sendMessage('继续分析')).toBe(false)
+    expect(chat.activeConversation.value?.messages).toEqual(snapshot.messages)
+    expect(chat.notice.value).toBe('Runtime 启动失败')
+  })
+
+  it('keeps the active session stable while a turn is submitting', async () => {
+    const api = assistantApi()
+    let resolveSubmit!: (value: AssistantSnapshot) => void
+    api.submitAssistantInput.mockImplementation(() => new Promise((resolve) => {
+      resolveSubmit = resolve
+    }))
+    const chat = useSupportChat({ api })
+    await chat.load()
+    await chat.selectConversation('conversation-1')
+
+    const submission = chat.sendMessage('继续分析')
+    await Promise.resolve()
+    chat.newConversation()
+    await chat.selectConversation('conversation-1')
+    await chat.deleteConversation('conversation-1')
+    expect(await chat.renameConversation('conversation-1', '不应生效')).toBe(false)
+    resolveSubmit(snapshot)
+
+    expect(await submission).toBe(true)
+    expect(chat.activeConversation.value?.id).toBe('conversation-1')
+    expect(api.hideAssistantConversation).not.toHaveBeenCalled()
+    expect(api.renameAssistantConversation).not.toHaveBeenCalled()
+  })
+
+  it('restores the persisted stopped state without reporting an interrupt error', async () => {
+    const api = { ...assistantApi(), stopAssistant: vi.fn() }
+    let rejectSubmit!: (reason: unknown) => void
+    api.submitAssistantInput.mockImplementation(() => new Promise((_resolve, reject) => {
+      rejectSubmit = reject
+    }))
+    api.stopAssistant.mockImplementation(async () => {
+      rejectSubmit({ code: 'ASSISTANT_RUNTIME_EXITED', message: 'Runtime 已停止' })
     })
+    api.getAssistantSnapshot
+      .mockResolvedValueOnce(snapshot)
+      .mockResolvedValue({ ...snapshot, status: 'stopped' })
+    const chat = useSupportChat({ api })
+    await chat.load()
+    await chat.selectConversation('conversation-1')
 
-    chat.sendMessage('保存不了也要显示')
+    const submission = chat.sendMessage('继续分析')
+    await Promise.resolve()
+    await chat.stop()
 
-    expect(chat.activeConversation.value?.messages[0]?.content).toBe('保存不了也要显示')
-    expect(chat.notice.value).toBe('历史对话保存失败，本次内容仅在当前运行期间保留')
+    expect(await submission).toBe(false)
+    expect(chat.status.value).toBe('stopped')
+    expect(chat.notice.value).toBeNull()
   })
 })

@@ -1,136 +1,259 @@
-import { computed, readonly, shallowRef } from 'vue'
-import {
-  loadSupportState,
-  saveSupportState,
-  type SupportChatState,
-  type SupportConversation,
-  type SupportMessage
-} from './support-chat-storage'
+import { computed, getCurrentScope, onScopeDispose, readonly, shallowRef } from 'vue'
+import { desktopApi, normalizeDesktopError, type DesktopApi } from '../../api/desktop'
+import type {
+  AssistantConversation,
+  AssistantInput,
+  AssistantSnapshot,
+  MockRule,
+  ProxyScript
+} from '../../shared/types'
 
-interface SupportStorage {
-  getItem(key: string): string | null
-  setItem(key: string, value: string): void
-}
+export type AssistantSessionApi = Pick<DesktopApi,
+  | 'listAssistantConversations'
+  | 'createAssistantConversation'
+  | 'getAssistantSnapshot'
+  | 'renameAssistantConversation'
+  | 'hideAssistantConversation'
+  | 'submitAssistantInput'
+  | 'authorizeAssistantNetworkRequest'
+  | 'executeAssistantNetworkRequest'
+  | 'saveMockRule'
+  | 'saveScript'
+  | 'resolveAssistantDraft'
+> & Partial<Pick<DesktopApi, 'listen' | 'stopAssistant'>>
 
 interface UseSupportChatOptions {
-  storage?: SupportStorage
-  now?: () => string
-  createId?: () => string
+  api?: AssistantSessionApi
 }
 
-function defaultId(): string {
-  return globalThis.crypto.randomUUID()
-}
-
-function createTitle(content: string): string {
-  const firstLine = content.split(/\r?\n/, 1)[0] ?? content
-  const characters = Array.from(firstLine.trim())
-  return characters.length > 28
-    ? `${characters.slice(0, 28).join('')}...`
-    : characters.join('')
-}
-
-function sortByUpdatedAt(conversations: readonly SupportConversation[]): SupportConversation[] {
+function sortByUpdatedAt(conversations: readonly AssistantConversation[]): AssistantConversation[] {
   return [...conversations].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
 }
 
 export function useSupportChat(options: UseSupportChatOptions = {}) {
-  const storage = options.storage ?? window.localStorage
-  const now = options.now ?? (() => new Date().toISOString())
-  const createId = options.createId ?? defaultId
-  const loaded = loadSupportState(storage)
-  const state = shallowRef<SupportChatState>(loaded.state)
-  const notice = shallowRef<string | null>(loaded.error)
+  const api = options.api ?? desktopApi
+  const conversationList = shallowRef<readonly AssistantConversation[]>([])
+  const snapshot = shallowRef<AssistantSnapshot | null>(null)
+  const notice = shallowRef<string | null>(null)
+  const loading = shallowRef(false)
+  const submitting = shallowRef(false)
+  let stopRequested = false
+  let stoppedConversationId: string | null = null
+  let unlistenSession: (() => void) | null = null
 
-  const conversations = computed(() => sortByUpdatedAt(state.value.conversations))
-  const activeConversation = computed(() => state.value.conversations.find(
-    (conversation) => conversation.id === state.value.activeConversationId
-  ) ?? null)
+  const conversations = computed(() => sortByUpdatedAt(conversationList.value))
+  const activeConversation = computed(() => snapshot.value
+    ? { ...snapshot.value.conversation, messages: snapshot.value.messages }
+    : null)
+  const status = computed(() => snapshot.value?.status ?? (loading.value ? 'starting' : 'ready'))
+  const activities = computed(() => snapshot.value?.activities ?? [])
+  const drafts = computed(() => snapshot.value?.drafts ?? [])
 
-  function commit(nextState: SupportChatState) {
-    state.value = nextState
-    notice.value = saveSupportState(storage, nextState)
+  async function load() {
+    loading.value = true
+    notice.value = null
+    try {
+      conversationList.value = await api.listAssistantConversations()
+      if (!unlistenSession && api.listen) {
+        unlistenSession = await api.listen<{
+          identity: { conversationId: string }
+        }>('assistant-session-event', async (event) => {
+          const conversationId = snapshot.value?.conversation.id
+          if (conversationId && event.identity.conversationId === conversationId) {
+            const refreshed = await api.getAssistantSnapshot(conversationId)
+            if (snapshot.value?.conversation.id === conversationId) {
+              snapshot.value = refreshed
+            }
+          }
+        })
+      }
+    } catch (cause) {
+      notice.value = normalizeDesktopError(cause).message
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function stop() {
+    if (!api.stopAssistant || !submitting.value) return
+    stopRequested = true
+    stoppedConversationId = snapshot.value?.conversation.id ?? null
+    try {
+      await api.stopAssistant()
+      if (snapshot.value) {
+        snapshot.value = await api.getAssistantSnapshot(snapshot.value.conversation.id)
+      }
+    } catch (cause) {
+      notice.value = normalizeDesktopError(cause).message
+    } finally {
+      stopRequested = false
+    }
   }
 
   function newConversation() {
-    commit({ ...state.value, activeConversationId: null })
+    if (submitting.value) return
+    snapshot.value = null
+    notice.value = null
   }
 
-  function selectConversation(id: string) {
-    if (!state.value.conversations.some((conversation) => conversation.id === id)) return
-    commit({ ...state.value, activeConversationId: id })
-  }
-
-  function sendMessage(input: string): boolean {
-    const content = input.trim()
-    if (!content) return false
-
-    const timestamp = now()
-    const active = activeConversation.value
-    const conversationId = active?.id ?? createId()
-    const message: SupportMessage = {
-      id: createId(),
-      role: 'user',
-      content,
-      createdAt: timestamp
+  async function selectConversation(id: string) {
+    if (submitting.value) return
+    if (!conversationList.value.some((conversation) => conversation.id === id)) return
+    loading.value = true
+    notice.value = null
+    try {
+      snapshot.value = await api.getAssistantSnapshot(id)
+    } catch (cause) {
+      notice.value = normalizeDesktopError(cause).message
+    } finally {
+      loading.value = false
     }
-    if (!active) {
-      const conversation: SupportConversation = {
-        id: conversationId,
-        title: createTitle(content),
-        createdAt: timestamp,
-        updatedAt: timestamp,
-        messages: [message]
+  }
+
+  async function sendInput(input: AssistantInput): Promise<boolean> {
+    if (submitting.value) return false
+    submitting.value = true
+    notice.value = null
+    stoppedConversationId = null
+    let submittedConversationId: string | null = null
+    try {
+      let conversation = snapshot.value?.conversation
+      if (!conversation) {
+        conversation = await api.createAssistantConversation()
+        conversationList.value = sortByUpdatedAt([...conversationList.value, conversation])
       }
-      commit({
-        version: 1,
-        activeConversationId: conversation.id,
-        conversations: [...state.value.conversations, conversation]
-      })
+      submittedConversationId = conversation.id
+      snapshot.value = await api.submitAssistantInput(conversation.id, input)
+      conversationList.value = sortByUpdatedAt(conversationList.value.map((item) =>
+        item.id === conversation.id ? snapshot.value!.conversation : item
+      ))
       return true
+    } catch (cause) {
+      if (!stopRequested && stoppedConversationId !== submittedConversationId) {
+        notice.value = normalizeDesktopError(cause).message
+      }
+      return false
+    } finally {
+      submitting.value = false
     }
-
-    commit({
-      ...state.value,
-      conversations: state.value.conversations.map((conversation) => conversation.id === active.id
-        ? { ...conversation, updatedAt: timestamp, messages: [...conversation.messages, message] }
-        : conversation)
-    })
-    return true
   }
 
-  function renameConversation(id: string, input: string): boolean {
+  async function sendMessage(input: string): Promise<boolean> {
+    const message = input.trim()
+    if (!message) return false
+    if (/^curl(?:\s|$)/i.test(message)) {
+      return sendInput({ kind: 'curl', curl: message })
+    }
+    return sendInput({ kind: 'message', message })
+  }
+
+  async function executeNetworkDraft(): Promise<boolean> {
+    const conversationId = snapshot.value?.conversation.id
+    if (!conversationId || submitting.value) return false
+    submitting.value = true
+    notice.value = null
+    try {
+      const requestHandle = await api.authorizeAssistantNetworkRequest(conversationId)
+      snapshot.value = await api.executeAssistantNetworkRequest(conversationId, requestHandle)
+      conversationList.value = sortByUpdatedAt(conversationList.value.map((conversation) =>
+        conversation.id === conversationId ? snapshot.value!.conversation : conversation
+      ))
+      return true
+    } catch (cause) {
+      notice.value = normalizeDesktopError(cause).message
+      return false
+    } finally {
+      submitting.value = false
+    }
+  }
+
+  async function acceptDraft(
+    draftId: string,
+    save: () => Promise<unknown>
+  ): Promise<boolean> {
+    const conversationId = snapshot.value?.conversation.id
+    if (!conversationId || submitting.value) return false
+    submitting.value = true
+    notice.value = null
+    try {
+      await save()
+      snapshot.value = await api.resolveAssistantDraft(conversationId, draftId, 'accepted')
+      return true
+    } catch (cause) {
+      notice.value = normalizeDesktopError(cause).message
+      return false
+    } finally {
+      submitting.value = false
+    }
+  }
+
+  function acceptMockDraft(draftId: string, rule: MockRule) {
+    return acceptDraft(draftId, () => api.saveMockRule({ ...rule, enabled: false }))
+  }
+
+  function acceptScriptDraft(draftId: string, script: ProxyScript) {
+    return acceptDraft(draftId, () => api.saveScript({ ...script, enabled: false }))
+  }
+
+  async function renameConversation(id: string, input: string): Promise<boolean> {
+    if (submitting.value) return false
     const title = input.trim()
-    if (!title || !state.value.conversations.some((conversation) => conversation.id === id)) return false
-    commit({
-      ...state.value,
-      conversations: state.value.conversations.map((conversation) => conversation.id === id
-        ? { ...conversation, title }
-        : conversation)
-    })
-    return true
+    if (!title || !conversationList.value.some((conversation) => conversation.id === id)) return false
+    try {
+      const updated = await api.renameAssistantConversation(id, title)
+      conversationList.value = conversationList.value.map((conversation) =>
+        conversation.id === id ? updated : conversation
+      )
+      if (snapshot.value?.conversation.id === id) {
+        snapshot.value = { ...snapshot.value, conversation: updated }
+      }
+      return true
+    } catch (cause) {
+      notice.value = normalizeDesktopError(cause).message
+      return false
+    }
   }
 
-  function deleteConversation(id: string) {
-    const remaining = state.value.conversations.filter((conversation) => conversation.id !== id)
-    if (remaining.length === state.value.conversations.length) return
-    const activeConversationId = state.value.activeConversationId === id
-      ? sortByUpdatedAt(remaining)[0]?.id ?? null
-      : state.value.activeConversationId
-    commit({ ...state.value, activeConversationId, conversations: remaining })
+  async function deleteConversation(id: string) {
+    if (submitting.value) return
+    try {
+      await api.hideAssistantConversation(id)
+      conversationList.value = conversationList.value.filter((conversation) => conversation.id !== id)
+      if (snapshot.value?.conversation.id === id) snapshot.value = null
+    } catch (cause) {
+      notice.value = normalizeDesktopError(cause).message
+    }
   }
 
   function dismissNotice() {
     notice.value = null
   }
 
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      unlistenSession?.()
+      unlistenSession = null
+    })
+  }
+
   return {
     conversations,
     activeConversation,
+    activities,
+    drafts,
+    status,
+    loading: readonly(loading),
+    submitting: readonly(submitting),
     notice: readonly(notice),
+    load,
     newConversation,
     selectConversation,
+    sendInput,
     sendMessage,
+    executeNetworkDraft,
+    stop,
+    acceptMockDraft,
+    acceptScriptDraft,
     renameConversation,
     deleteConversation,
     dismissNotice

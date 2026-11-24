@@ -4,9 +4,11 @@ import test from 'node:test'
 import {
   NETCAT_TOOL_NAMES,
   NetcatToolClient,
+  TOOL_PARAMETER_SCHEMAS,
   validateToolArguments,
   validateToolResult
 } from '../plugin-netcat/src/index.ts'
+import { NetcatCredentialClient } from '../plugin-netcat/src/credentials.ts'
 
 test('plugin exposes only the eight approved NetCat tools', () => {
   assert.deepEqual(NETCAT_TOOL_NAMES, [
@@ -19,6 +21,27 @@ test('plugin exposes only the eight approved NetCat tools', () => {
     'netcat_create_script_draft',
     'netcat_execute_curl'
   ])
+})
+
+test('each NetCat tool exposes its own least-privilege parameter schema', () => {
+  assert.deepEqual(Object.keys(TOOL_PARAMETER_SCHEMAS.netcat_compare_exchanges), [
+    'resourceId',
+    'otherResourceId'
+  ])
+  assert.deepEqual(Object.keys(TOOL_PARAMETER_SCHEMAS.netcat_create_mock_draft), [
+    'resourceId',
+    'name',
+    'status',
+    'responseBody'
+  ])
+  assert.deepEqual(Object.keys(TOOL_PARAMETER_SCHEMAS.netcat_create_script_draft), [
+    'resourceId',
+    'name',
+    'source'
+  ])
+  assert.deepEqual(TOOL_PARAMETER_SCHEMAS.netcat_execute_curl, {
+    requestHandle: { type: 'string', required: true }
+  })
 })
 
 test('tool arguments reject local paths, commands, and credentials', () => {
@@ -52,4 +75,23 @@ test('tool results must be durable JSON values', () => {
   })
   assert.throws(() => validateToolResult({ value: undefined }), /JSON value/)
   assert.throws(() => validateToolResult(() => undefined), /JSON value/)
+})
+
+test('credential client resolves only approved references over authenticated IPC', async () => {
+  const calls: unknown[] = []
+  const client = new NetcatCredentialClient('startup-token', async payload => {
+    calls.push(payload)
+    return { configured: true, value: 'sk-private' }
+  })
+
+  assert.deepEqual(await client.resolve('DEEPSEEK_API_KEY'), {
+    value: 'sk-private',
+    source: 'netcat-secure-storage'
+  })
+  assert.deepEqual(calls, [{
+    token: 'startup-token',
+    method: 'credentials/resolve',
+    params: { reference: 'DEEPSEEK_API_KEY' }
+  }])
+  await assert.rejects(() => client.resolve('UNAPPROVED_API_KEY'), /not allowed/)
 })

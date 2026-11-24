@@ -56,6 +56,7 @@ const contextDetail = shallowRef<TrafficDetail | null>(null)
 const contextPosition = reactive({ x: 0, y: 0 })
 const diagnosticsOpen = shallowRef(false)
 const supportOpen = shallowRef(false)
+const supportExchangeId = shallowRef<string | null>(null)
 const networkEditorOpen = shallowRef(false)
 const diagnosticDetail = shallowRef<DiagnosticTrafficDetail | null>(null)
 const diagnosticDetailLoading = shallowRef(false)
@@ -329,6 +330,21 @@ async function copyCurl(id: string) {
   toast.value = 'cURL 已复制到剪贴板'
 }
 
+function openSupport() {
+  supportExchangeId.value = null
+  supportOpen.value = true
+}
+
+function analyzeExchange(id: string) {
+  supportExchangeId.value = id
+  supportOpen.value = true
+}
+
+function closeSupport() {
+  supportOpen.value = false
+  supportExchangeId.value = null
+}
+
 async function exportCa() {
   await capture.api.exportCa()
   toast.value = '证书已导出'
@@ -492,6 +508,7 @@ onMounted(() => void capture.initialize())
         v-if="activeView === 'traffic'"
         :detail="capture.selectedDetail.value"
         @copy-curl="copyCurl"
+        @analyze="analyzeExchange"
       />
       <aside v-else-if="activeView === 'mocks'" class="mock-inspector">
         <h2>规则执行顺序</h2>
@@ -566,12 +583,13 @@ onMounted(() => void capture.initialize())
       @select-traffic="selectDiagnosticTraffic"
     />
 
-    <SupportLauncher v-if="!supportOpen" @open="supportOpen = true" />
+    <SupportLauncher v-if="!supportOpen" @open="openSupport" />
 
     <SupportChatPanel
       v-else
       id="support-chat-panel"
-      @close="supportOpen = false"
+      :initial-exchange-id="supportExchangeId"
+      @close="closeSupport"
     />
   </div>
 </template>

@@ -5,8 +5,19 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./credentials": {
+      "types": "./dist/credentials.d.ts",
+      "default": "./dist/credentials.js"
+    }
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "~4.2.0-alpha.1",
+    "@deepseek-ai/dsh-credentials": "0.2.3-alpha.2",
     "@deepseek-ai/dsh-tools": "0.2.3-alpha.2"
   },
   "dsh": {

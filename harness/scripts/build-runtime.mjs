@@ -40,6 +40,8 @@ try {
   await cp(join(repositoryRoot, 'harness/plugin-netcat/cordis.patch.yml'), join(plugin, 'cordis.patch.yml'))
   await cp(join(repositoryRoot, 'harness/dist/plugin-netcat/src/index.js'), join(plugin, 'dist/index.js'))
   await cp(join(repositoryRoot, 'harness/dist/plugin-netcat/src/index.d.ts'), join(plugin, 'dist/index.d.ts'))
+  await cp(join(repositoryRoot, 'harness/dist/plugin-netcat/src/credentials.js'), join(plugin, 'dist/credentials.js'))
+  await cp(join(repositoryRoot, 'harness/dist/plugin-netcat/src/credentials.d.ts'), join(plugin, 'dist/credentials.d.ts'))
 
   await prepareRuntimeLayout({
     output,

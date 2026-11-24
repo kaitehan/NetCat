@@ -233,6 +233,79 @@ export interface AppError {
   action?: string | null
 }
 
+export type AssistantStatus =
+  | 'starting'
+  | 'ready'
+  | 'waitingModel'
+  | 'callingTool'
+  | 'waitingApproval'
+  | 'runningDiagnosis'
+  | 'completed'
+  | 'stopped'
+  | 'recovering'
+  | 'credentialRequired'
+  | 'error'
+
+export interface AssistantConversation {
+  id: string
+  sessionId: string
+  title: string
+  createdAt: string
+  updatedAt: string
+  hidden: boolean
+}
+
+export interface AssistantMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  createdAt: string
+}
+
+export interface AssistantActivity {
+  id: string
+  kind: string
+  label: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  createdAt: string
+}
+
+export interface AssistantDraft {
+  id: string
+  kind: 'mock' | 'script' | 'networkRequest'
+  payload: Readonly<Record<string, unknown>>
+  status: 'pending' | 'accepted' | 'rejected'
+}
+
+export interface AssistantSnapshot {
+  conversation: AssistantConversation
+  messages: readonly AssistantMessage[]
+  activities: readonly AssistantActivity[]
+  drafts: readonly AssistantDraft[]
+  status: AssistantStatus
+}
+
+export type AssistantInput =
+  | { kind: 'message'; message: string }
+  | { kind: 'curl'; curl: string }
+  | { kind: 'exchange'; exchangeId: string }
+
+export type AssistantProvider = 'deepSeek' | 'openAi'
+
+export interface AssistantSettings {
+  provider: AssistantProvider
+  model: string
+  openAiProvider: string
+  openAiBaseUrl: string
+  openAiApi: 'openai-responses' | 'openai-completions'
+}
+
+export interface AssistantCredentialDescription {
+  provider: AssistantProvider
+  configured: boolean
+  maskedValue: string | null
+}
+
 export interface CaStatus {
   generated: boolean
   certificatePath: string | null

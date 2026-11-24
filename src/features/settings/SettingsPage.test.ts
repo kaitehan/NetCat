@@ -34,6 +34,121 @@ const props = {
 }
 
 describe('SettingsPage', () => {
+  it('configures the assistant provider, credential, and runtime through stable APIs', async () => {
+    const assistantApi = {
+      getAssistantSettings: vi.fn().mockResolvedValue({
+        provider: 'deepSeek',
+        model: 'deepseek-official/deepseek-v4-flash',
+        openAiProvider: 'openai',
+        openAiBaseUrl: 'https://api.openai.com/v1',
+        openAiApi: 'openai-responses'
+      }),
+      saveAssistantSettings: vi.fn().mockImplementation(async (provider, model, openAiProvider = 'openai', openAiBaseUrl = 'https://api.openai.com/v1', openAiApi = 'openai-responses') => ({
+        provider,
+        model,
+        openAiProvider,
+        openAiBaseUrl,
+        openAiApi
+      })),
+      describeAssistantCredential: vi.fn().mockResolvedValue({ provider: 'deepSeek', configured: false, maskedValue: null }),
+      saveAssistantCredential: vi.fn().mockResolvedValue({ provider: 'openAi', configured: true, maskedValue: '********' }),
+      deleteAssistantCredential: vi.fn().mockResolvedValue({ provider: 'openAi', configured: false, maskedValue: null }),
+      validateAssistantCredential: vi.fn().mockResolvedValue({ provider: 'openAi', configured: true, maskedValue: '********' }),
+      testAssistantConnection: vi.fn().mockResolvedValue('连接成功，模型 acme-chat 可用。'),
+      restartAssistant: vi.fn().mockResolvedValue(undefined)
+    }
+    render(SettingsPage, { props: { ...props, assistantApi } })
+
+    await fireEvent.click(screen.getByRole('tab', { name: '智奈配置' }))
+    expect(await screen.findByText('deepseek-official/deepseek-v4-flash')).toBeVisible()
+
+    await fireEvent.click(screen.getByRole('radio', { name: 'OpenAI' }))
+    expect(screen.getByLabelText('模型标识')).toHaveValue('gpt-4.1')
+    await fireEvent.update(screen.getByLabelText('供应商标识'), 'acme-gateway')
+    await fireEvent.update(screen.getByLabelText('模型标识'), 'acme-chat')
+    await fireEvent.update(screen.getByLabelText('API Base URL'), 'https://gateway.example.com/v1')
+    await fireEvent.update(screen.getByLabelText('OpenAI API Key'), 'sk-test')
+    expect(screen.getByRole('button', { name: '保存 API Key' })).toBeDisabled()
+    await fireEvent.click(screen.getByRole('button', { name: '保存模型配置' }))
+    expect(assistantApi.saveAssistantSettings).toHaveBeenLastCalledWith(
+      'openAi',
+      'acme-gateway/acme-chat',
+      'acme-gateway',
+      'https://gateway.example.com/v1',
+      'openai-responses'
+    )
+
+    await fireEvent.update(screen.getByLabelText('OpenAI API Key'), 'sk-test')
+    await fireEvent.click(screen.getByRole('button', { name: '保存 API Key' }))
+    expect(assistantApi.saveAssistantCredential).toHaveBeenCalledWith('openAi', 'sk-test')
+
+    await fireEvent.click(screen.getByRole('button', { name: '验证凭据' }))
+    expect(assistantApi.validateAssistantCredential).toHaveBeenCalledWith('openAi')
+    expect(await screen.findByText('安全存储中的凭据可供 Runtime 使用。')).toBeVisible()
+
+    await fireEvent.click(screen.getByRole('button', { name: '测试连接' }))
+    expect(assistantApi.testAssistantConnection).toHaveBeenCalledOnce()
+    expect(await screen.findByText('连接成功，模型 acme-chat 可用。')).toBeVisible()
+
+    await fireEvent.click(screen.getByRole('button', { name: '重新启动智奈' }))
+    expect(assistantApi.restartAssistant).toHaveBeenCalledOnce()
+  })
+
+  it('shows secure storage failures while saving an assistant credential', async () => {
+    const assistantApi = {
+      getAssistantSettings: vi.fn().mockResolvedValue({
+        provider: 'openAi',
+        model: 'openai/gpt-4.1',
+        openAiProvider: 'openai',
+        openAiBaseUrl: 'https://api.openai.com/v1',
+        openAiApi: 'openai-responses'
+      }),
+      saveAssistantSettings: vi.fn(),
+      describeAssistantCredential: vi.fn().mockResolvedValue({ provider: 'openAi', configured: false, maskedValue: null }),
+      saveAssistantCredential: vi.fn().mockRejectedValue({ code: 'ASSISTANT_CREDENTIAL_ERROR', message: '无法访问智奈 API Key' }),
+      deleteAssistantCredential: vi.fn(),
+      validateAssistantCredential: vi.fn(),
+      testAssistantConnection: vi.fn(),
+      restartAssistant: vi.fn()
+    }
+    render(SettingsPage, { props: { ...props, assistantApi } })
+
+    await fireEvent.click(screen.getByRole('tab', { name: '智奈配置' }))
+    await fireEvent.update(await screen.findByLabelText('OpenAI API Key'), 'sk-test')
+    await fireEvent.click(screen.getByRole('button', { name: '保存 API Key' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('无法访问智奈 API Key')
+    expect(screen.getByRole('button', { name: '保存 API Key' })).toBeEnabled()
+  })
+
+  it('does not test a persisted OpenAI connection while the visible model configuration is unsaved', async () => {
+    const assistantApi = {
+      getAssistantSettings: vi.fn().mockResolvedValue({
+        provider: 'openAi',
+        model: 'openai/gpt-4.1',
+        openAiProvider: 'openai',
+        openAiBaseUrl: 'https://api.openai.com/v1',
+        openAiApi: 'openai-responses'
+      }),
+      saveAssistantSettings: vi.fn(),
+      describeAssistantCredential: vi.fn().mockResolvedValue({ provider: 'openAi', configured: true, maskedValue: '********' }),
+      saveAssistantCredential: vi.fn(),
+      deleteAssistantCredential: vi.fn(),
+      validateAssistantCredential: vi.fn(),
+      testAssistantConnection: vi.fn(),
+      restartAssistant: vi.fn()
+    }
+    render(SettingsPage, { props: { ...props, assistantApi } })
+
+    await fireEvent.click(screen.getByRole('tab', { name: '智奈配置' }))
+    const testConnection = await screen.findByRole('button', { name: '测试连接' })
+    expect(testConnection).toBeEnabled()
+
+    await fireEvent.update(screen.getByLabelText('模型标识'), 'gpt-4.2')
+
+    expect(testConnection).toBeDisabled()
+  })
+
   it('switches capture source while stopped and exposes the bounded idle timeout', async () => {
     const { emitted } = render(SettingsPage, { props })
 

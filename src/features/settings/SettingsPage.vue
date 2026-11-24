@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { Bug, Download, Laptop, Pause, Router, Settings2, ShieldCheck } from '@lucide/vue'
+import { Bot, Bug, CheckCircle2, Download, KeyRound, Laptop, Pause, RotateCcw, Router, Settings2, ShieldCheck } from '@lucide/vue'
 import { computed, shallowRef } from 'vue'
-import type { CaStatus, CaPrivateKeyState, CertificateTrustState, HistoricalDevice, PairedDevice, PairingChallenge, PlatformInfo, ProxyMode, ProxyStatus, SystemProxyStatus } from '../../shared/types'
+import { desktopApi, normalizeDesktopError, type DesktopApi } from '../../api/desktop'
+import type { AssistantCredentialDescription, AssistantProvider, AssistantSettings, CaStatus, CaPrivateKeyState, CertificateTrustState, HistoricalDevice, PairedDevice, PairingChallenge, PlatformInfo, ProxyMode, ProxyStatus, SystemProxyStatus } from '../../shared/types'
 import CertificatePanel from '../certificate/CertificatePanel.vue'
 import MobileConnectionPanel from './MobileConnectionPanel.vue'
 
@@ -22,7 +23,8 @@ const {
   systemProxyPreferred,
   systemProxyEnabled,
   caStatus,
-  busy
+  busy,
+  assistantApi
 } = defineProps<{
   platform: PlatformInfo | null
   trustState: CertificateTrustState
@@ -41,6 +43,16 @@ const {
   systemProxyEnabled: boolean
   caStatus: CaStatus
   busy: boolean
+  assistantApi?: Pick<DesktopApi,
+    | 'getAssistantSettings'
+    | 'saveAssistantSettings'
+    | 'describeAssistantCredential'
+    | 'saveAssistantCredential'
+    | 'deleteAssistantCredential'
+    | 'validateAssistantCredential'
+    | 'testAssistantConnection'
+    | 'restartAssistant'
+  >
 }>()
 
 const emit = defineEmits<{
@@ -64,7 +76,26 @@ const emit = defineEmits<{
   exportDiagnostics: []
 }>()
 
-const activeTab = shallowRef<'proxy' | 'certificate' | 'system'>('proxy')
+const activeTab = shallowRef<'proxy' | 'certificate' | 'system' | 'assistant'>('proxy')
+const assistantClient = assistantApi ?? desktopApi
+const assistantSettings = shallowRef<AssistantSettings | null>(null)
+const assistantCredential = shallowRef<AssistantCredentialDescription | null>(null)
+const assistantKey = shallowRef('')
+const assistantBusy = shallowRef(false)
+const assistantError = shallowRef<string | null>(null)
+const assistantValidation = shallowRef<string | null>(null)
+const openAiProvider = shallowRef('openai')
+const openAiModel = shallowRef('gpt-4.1')
+const openAiBaseUrl = shallowRef('https://api.openai.com/v1')
+const openAiApi = shallowRef<AssistantSettings['openAiApi']>('openai-responses')
+const openAiConfigurationDirty = computed(() => {
+  const settings = assistantSettings.value
+  if (!settings || settings.provider !== 'openAi') return false
+  return settings.openAiProvider !== openAiProvider.value.trim() ||
+    settings.model !== `${openAiProvider.value.trim()}/${openAiModel.value.trim()}` ||
+    settings.openAiBaseUrl !== openAiBaseUrl.value.trim() ||
+    settings.openAiApi !== openAiApi.value
+})
 const proxyRecoveryNeeded = computed(() => systemProxyStatus.conflict ||
   (systemProxyStatus.recoveryPending && (!systemProxyStatus.managed || proxyStatus.state !== 'running')))
 const systemProxyChecked = computed(() => {
@@ -87,6 +118,137 @@ function updateSystemProxy(event: Event) {
 
 function renameDevice(deviceToken: string, name: string) {
   emit('renameDevice', deviceToken, name)
+}
+
+async function openAssistantSettings() {
+  activeTab.value = 'assistant'
+  assistantBusy.value = true
+  assistantError.value = null
+  try {
+    assistantSettings.value = await assistantClient.getAssistantSettings()
+    syncOpenAiForm(assistantSettings.value)
+    assistantCredential.value = await assistantClient.describeAssistantCredential(assistantSettings.value.provider)
+  } catch (cause) {
+    assistantError.value = normalizeDesktopError(cause).message
+  } finally {
+    assistantBusy.value = false
+  }
+}
+
+async function selectAssistantProvider(provider: AssistantProvider) {
+  assistantError.value = null
+  const model = provider === 'deepSeek'
+    ? 'deepseek-official/deepseek-v4-flash'
+    : `${openAiProvider.value}/${openAiModel.value}`
+  if (provider === 'deepSeek') {
+    assistantSettings.value = await assistantClient.saveAssistantSettings(provider, model)
+  } else if (assistantSettings.value) {
+    assistantSettings.value = { ...assistantSettings.value, provider, model }
+  }
+  assistantCredential.value = await assistantClient.describeAssistantCredential(provider)
+  assistantKey.value = ''
+}
+
+function syncOpenAiForm(settings: AssistantSettings) {
+  openAiProvider.value = settings.openAiProvider
+  openAiBaseUrl.value = settings.openAiBaseUrl
+  openAiApi.value = settings.openAiApi
+  if (settings.provider !== 'openAi') {
+    openAiModel.value = 'gpt-4.1'
+    return
+  }
+  const prefix = `${settings.openAiProvider}/`
+  openAiModel.value = settings.model.startsWith(prefix)
+    ? settings.model.slice(prefix.length)
+    : (settings.model.split('/').slice(1).join('/') || 'gpt-4.1')
+}
+
+async function saveAssistantModel() {
+  if (assistantSettings.value?.provider !== 'openAi') return
+  assistantBusy.value = true
+  assistantError.value = null
+  assistantValidation.value = null
+  try {
+    const route = openAiProvider.value.trim()
+    const model = openAiModel.value.trim()
+    assistantSettings.value = await assistantClient.saveAssistantSettings(
+      'openAi',
+      `${route}/${model}`,
+      route,
+      openAiBaseUrl.value.trim(),
+      openAiApi.value
+    )
+    syncOpenAiForm(assistantSettings.value)
+    assistantCredential.value = await assistantClient.describeAssistantCredential('openAi')
+    assistantKey.value = ''
+    assistantValidation.value = '模型配置已保存并应用到 Runtime。'
+  } catch (cause) {
+    assistantError.value = normalizeDesktopError(cause).message
+  } finally {
+    assistantBusy.value = false
+  }
+}
+
+async function saveAssistantKey() {
+  const provider = assistantSettings.value?.provider
+  if (!provider) return
+  assistantBusy.value = true
+  assistantError.value = null
+  assistantValidation.value = null
+  try {
+    assistantCredential.value = await assistantClient.saveAssistantCredential(provider, assistantKey.value)
+    assistantKey.value = ''
+    assistantValidation.value = 'API Key 已保存到系统安全存储。'
+  } catch (cause) {
+    assistantError.value = normalizeDesktopError(cause).message
+  } finally {
+    assistantBusy.value = false
+  }
+}
+
+async function validateAssistantKey() {
+  const provider = assistantSettings.value?.provider
+  if (!provider) return
+  assistantBusy.value = true
+  assistantError.value = null
+  assistantValidation.value = null
+  try {
+    assistantCredential.value = await assistantClient.validateAssistantCredential(provider)
+    assistantValidation.value = '安全存储中的凭据可供 Runtime 使用。'
+  } catch (cause) {
+    assistantError.value = normalizeDesktopError(cause).message
+  } finally {
+    assistantBusy.value = false
+  }
+}
+
+async function testAssistantConnection() {
+  assistantBusy.value = true
+  assistantError.value = null
+  assistantValidation.value = null
+  try {
+    assistantValidation.value = await assistantClient.testAssistantConnection()
+  } catch (cause) {
+    assistantError.value = normalizeDesktopError(cause).message
+  } finally {
+    assistantBusy.value = false
+  }
+}
+
+async function deleteAssistantKey() {
+  const provider = assistantSettings.value?.provider
+  if (!provider) return
+  assistantBusy.value = true
+  assistantError.value = null
+  assistantValidation.value = null
+  try {
+    assistantCredential.value = await assistantClient.deleteAssistantCredential(provider)
+    assistantValidation.value = 'API Key 已从系统安全存储删除。'
+  } catch (cause) {
+    assistantError.value = normalizeDesktopError(cause).message
+  } finally {
+    assistantBusy.value = false
+  }
 }
 </script>
 
@@ -127,6 +289,16 @@ function renameDevice(deviceToken: string, name: string) {
         >
           <Settings2 :size="14" />
           系统配置
+        </button>
+        <button
+          type="button"
+          role="tab"
+          :aria-selected="activeTab === 'assistant'"
+          :tabindex="activeTab === 'assistant' ? 0 : -1"
+          @click="openAssistantSettings"
+        >
+          <Bot :size="14" />
+          智奈配置
         </button>
       </div>
     </header>
@@ -236,7 +408,7 @@ function renameDevice(deviceToken: string, name: string) {
       />
     </div>
 
-    <div v-else class="settings-content" role="tabpanel">
+    <div v-else-if="activeTab === 'system'" class="settings-content" role="tabpanel">
       <section class="settings-section">
         <div class="section-heading">
           <Bug :size="17" />
@@ -277,7 +449,150 @@ function renameDevice(deviceToken: string, name: string) {
           </button>
         </div>
       </section>
+    </div>
 
+    <div v-else class="settings-content assistant-settings" role="tabpanel">
+      <div v-if="assistantError" class="assistant-error" role="alert">{{ assistantError }}</div>
+      <section class="settings-section">
+        <div class="section-heading">
+          <Bot :size="17" />
+          <div>
+            <h2>模型服务</h2>
+            <p>明确选择本次智奈会话使用的模型服务。</p>
+          </div>
+        </div>
+        <fieldset class="provider-control" :disabled="assistantBusy">
+          <legend>模型服务</legend>
+          <label>
+            <input
+              type="radio"
+              name="assistant-provider"
+              value="deepSeek"
+              aria-label="DeepSeek"
+              :checked="assistantSettings?.provider === 'deepSeek'"
+              @change="selectAssistantProvider('deepSeek')"
+            />
+            DeepSeek
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="assistant-provider"
+              value="openAi"
+              aria-label="OpenAI"
+              :checked="assistantSettings?.provider === 'openAi'"
+              @change="selectAssistantProvider('openAi')"
+            />
+            OpenAI
+          </label>
+        </fieldset>
+        <div v-if="assistantSettings?.provider === 'openAi'" class="openai-compatible-form">
+          <label>
+            <span>供应商标识</span>
+            <input v-model="openAiProvider" aria-label="供应商标识" autocomplete="off" placeholder="openai" />
+          </label>
+          <label>
+            <span>模型标识</span>
+            <input v-model="openAiModel" aria-label="模型标识" autocomplete="off" placeholder="gpt-4.1" />
+          </label>
+          <label class="openai-base-url">
+            <span>API Base URL</span>
+            <input
+              v-model="openAiBaseUrl"
+              aria-label="API Base URL"
+              autocomplete="off"
+              placeholder="https://api.openai.com/v1"
+            />
+          </label>
+          <label>
+            <span>API 协议</span>
+            <select v-model="openAiApi" aria-label="API 协议">
+              <option value="openai-responses">Responses API</option>
+              <option value="openai-completions">Chat Completions</option>
+            </select>
+          </label>
+          <button
+            type="button"
+            class="debug-button"
+            :disabled="assistantBusy || !openAiProvider.trim() || !openAiModel.trim() || !openAiBaseUrl.trim()"
+            aria-label="保存模型配置"
+            @click="saveAssistantModel"
+          >
+            保存模型配置
+          </button>
+        </div>
+        <div v-else class="assistant-model">{{ assistantSettings?.model ?? '正在读取模型配置' }}</div>
+      </section>
+
+      <section class="settings-section">
+        <div class="section-heading">
+          <KeyRound :size="17" />
+          <div>
+            <h2>API 凭据</h2>
+            <p>{{ assistantCredential?.configured ? '已安全保存，输入框不会回填原值。' : '尚未配置当前服务商的 API Key。' }}</p>
+          </div>
+        </div>
+        <div class="credential-row">
+          <input
+            v-model="assistantKey"
+            type="password"
+            :aria-label="`${assistantSettings?.provider === 'openAi' ? 'OpenAI' : 'DeepSeek'} API Key`"
+            autocomplete="off"
+            placeholder="输入新的 API Key"
+          />
+          <button
+            type="button"
+            class="debug-button"
+            :disabled="assistantBusy || openAiConfigurationDirty || !assistantKey.trim()"
+            @click="saveAssistantKey"
+          >
+            保存 API Key
+          </button>
+          <button
+            v-if="assistantCredential?.configured"
+            type="button"
+            class="debug-button danger"
+            :disabled="assistantBusy || openAiConfigurationDirty"
+            @click="deleteAssistantKey"
+          >
+            删除
+          </button>
+          <button
+            v-if="assistantCredential?.configured"
+            type="button"
+            class="debug-button"
+            :disabled="assistantBusy || openAiConfigurationDirty"
+            @click="validateAssistantKey"
+          >
+            <CheckCircle2 :size="14" />
+            验证凭据
+          </button>
+          <button
+            v-if="assistantSettings?.provider === 'openAi' && assistantCredential?.configured"
+            type="button"
+            class="debug-button"
+            :disabled="assistantBusy || openAiConfigurationDirty"
+            @click="testAssistantConnection"
+          >
+            <CheckCircle2 :size="14" />
+            测试连接
+          </button>
+        </div>
+        <p v-if="assistantValidation" class="assistant-validation" role="status">{{ assistantValidation }}</p>
+      </section>
+
+      <section class="settings-section">
+        <div class="setting-row">
+          <div>
+            <span class="setting-label">Harness Runtime</span>
+            <p>DSH 0.2.3-alpha.2 · Bridge 0.2.3-alpha.2 · Node.js 24.22.3</p>
+          </div>
+          <button type="button" class="debug-button" @click="assistantClient.restartAssistant()">
+            <RotateCcw :size="14" />
+            重新启动智奈
+          </button>
+        </div>
+      </section>
     </div>
   </section>
 </template>
@@ -509,6 +824,132 @@ function renameDevice(deviceToken: string, name: string) {
   font-size: var(--font-size-xs);
 }
 
+.assistant-settings {
+  gap: 0;
+}
+
+.provider-control {
+  display: inline-flex;
+  margin: 12px 0 10px;
+  padding: 3px;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-raised);
+}
+
+.provider-control legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+
+.provider-control label {
+  position: relative;
+  min-width: 92px;
+  padding: 6px 10px;
+  border-radius: calc(var(--radius-control) - 2px);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  text-align: center;
+  cursor: pointer;
+}
+
+.provider-control label:has(input:checked) {
+  background: var(--surface);
+  color: var(--accent-strong);
+  box-shadow: var(--shadow-active);
+}
+
+.provider-control input {
+  position: absolute;
+  opacity: 0;
+}
+
+.provider-control label:has(input:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.assistant-model {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.openai-compatible-form {
+  display: grid;
+  margin: 2px 0 12px;
+  grid-template-columns: minmax(140px, 0.7fr) minmax(180px, 1fr) auto;
+  gap: 8px;
+}
+
+.openai-compatible-form label {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.openai-compatible-form input,
+.openai-compatible-form select {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+}
+
+.openai-base-url {
+  grid-column: 1 / 3;
+}
+
+.openai-compatible-form > .debug-button {
+  align-self: end;
+}
+
+.credential-row {
+  display: grid;
+  margin-top: 12px;
+  grid-template-columns: minmax(180px, 1fr) repeat(4, auto);
+  gap: 8px;
+}
+
+.assistant-validation {
+  margin: 8px 0 0;
+  color: var(--success);
+  font-size: var(--font-size-xs);
+}
+
+.credential-row input {
+  min-width: 0;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+}
+
+.assistant-error {
+  padding: 9px 12px;
+  border: 1px solid var(--danger-border);
+  border-radius: var(--radius-control);
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: var(--font-size-sm);
+}
+
 @media (max-width: 720px) {
   .settings-header {
     align-items: start;
@@ -522,6 +963,18 @@ function renameDevice(deviceToken: string, name: string) {
 
   .settings-content {
     padding: 16px;
+  }
+
+  .credential-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .openai-compatible-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .openai-base-url {
+    grid-column: auto;
   }
 }
 </style>

@@ -34,7 +34,6 @@ const child = spawn(
       TMP: process.env.TMP ?? '',
       HOME: process.env.HOME ?? '',
       USERPROFILE: process.env.USERPROFILE ?? '',
-      DEEPSEEK_API_KEY: 'smoke-only',
       NETCAT_TOOL_ENDPOINT: join(home, process.platform === 'win32' ? 'tool.pipe' : 'tool.sock'),
       NETCAT_TOOL_TOKEN: 'smoke-only'
     },

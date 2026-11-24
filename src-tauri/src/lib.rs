@@ -1,4 +1,5 @@
 mod app;
+pub mod assistant;
 mod body;
 pub mod ca;
 pub mod diagnostics;

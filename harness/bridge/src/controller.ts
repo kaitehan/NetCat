@@ -22,6 +22,25 @@ type HarnessFactory = (options: HarnessOptions) => HarnessLike
 type EventSink = (event: Record<string, unknown>) => void
 type Params = Record<string, unknown>
 
+function record(value: unknown): Params | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Params
+    : null
+}
+
+function notificationEvent(notification: unknown): { type: string; payload: Params } {
+  const value = record(notification)
+  const method = typeof value?.method === 'string' ? value.method.replaceAll('.', '/') : ''
+  const params = record(value?.params) ?? {}
+  if (method === 'tool/started' || method === 'tool/completed' || method === 'approval/requested') {
+    return { type: method, payload: params }
+  }
+  if (method === 'session/status') {
+    return { type: 'session/status', payload: params }
+  }
+  return { type: 'session/activity', payload: { notification } }
+}
+
 function requiredString(params: Params, name: string): string {
   const value = params[name]
   if (typeof value !== 'string' || value.length === 0) throw new TypeError(`${name} is required`)
@@ -98,14 +117,17 @@ export class BridgeController {
     try {
       const result = await harness.run(input, {
         sessionId,
-        onNotification: notification => this.emit({
-          type: 'session/activity',
-          requestId,
-          conversationId,
-          sessionId,
-          operationId,
-          payload: { notification }
-        })
+        onNotification: notification => {
+          const event = notificationEvent(notification)
+          this.emit({
+            type: event.type,
+            requestId,
+            conversationId,
+            sessionId,
+            operationId,
+            payload: event.payload
+          })
+        }
       })
       const response = {
         sessionId: result.sessionId,

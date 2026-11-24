@@ -3,6 +3,7 @@ use std::{collections::HashSet, path::Path, sync::Mutex};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
+    assistant::models::AssistantConversation,
     body::decode_body_text,
     error::AppError,
     models::{
@@ -139,6 +140,34 @@ impl Store {
                    SELECT 1 FROM schema_migrations WHERE version = 6
                  );
              INSERT OR IGNORE INTO schema_migrations(version) VALUES (6);
+             COMMIT;",
+        )?;
+        connection.execute_batch(
+            "BEGIN;
+             CREATE TABLE IF NOT EXISTS assistant_conversations(
+               id TEXT PRIMARY KEY,
+               session_id TEXT NOT NULL UNIQUE,
+               title TEXT NOT NULL,
+               created_at TEXT NOT NULL,
+               updated_at TEXT NOT NULL,
+               hidden INTEGER NOT NULL DEFAULT 0
+             );
+             CREATE TABLE IF NOT EXISTS assistant_operations(
+               id TEXT PRIMARY KEY,
+               conversation_id TEXT NOT NULL,
+               input_projection TEXT NOT NULL,
+               status TEXT NOT NULL,
+               created_at TEXT NOT NULL,
+               updated_at TEXT NOT NULL,
+               FOREIGN KEY(conversation_id) REFERENCES assistant_conversations(id)
+             );
+             CREATE TABLE IF NOT EXISTS assistant_projections(
+               conversation_id TEXT PRIMARY KEY,
+               payload TEXT NOT NULL,
+               updated_at TEXT NOT NULL,
+               FOREIGN KEY(conversation_id) REFERENCES assistant_conversations(id)
+             );
+             INSERT OR IGNORE INTO schema_migrations(version) VALUES (7);
              COMMIT;",
         )?;
         connection.execute(
@@ -719,6 +748,19 @@ impl Store {
         Ok(())
     }
 
+    pub fn set_settings(&self, settings: &[(&str, &str)]) -> Result<(), AppError> {
+        let mut connection = self.connection.lock().expect("store mutex poisoned");
+        let transaction = connection.transaction()?;
+        for (key, value) in settings {
+            transaction.execute(
+                "INSERT OR REPLACE INTO app_settings(key, value) VALUES (?1, ?2)",
+                params![key, value],
+            )?;
+        }
+        transaction.commit()?;
+        Ok(())
+    }
+
     pub fn get_setting(&self, key: &str) -> Result<Option<String>, AppError> {
         self.connection
             .lock()
@@ -738,6 +780,102 @@ impl Store {
             .expect("store mutex poisoned")
             .execute("DELETE FROM app_settings WHERE key = ?1", params![key])?;
         Ok(())
+    }
+
+    pub fn save_assistant_conversation(
+        &self,
+        conversation: &AssistantConversation,
+    ) -> Result<(), AppError> {
+        self.connection
+            .lock()
+            .expect("store mutex poisoned")
+            .execute(
+                "INSERT OR REPLACE INTO assistant_conversations(
+               id, session_id, title, created_at, updated_at, hidden
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    conversation.id,
+                    conversation.session_id,
+                    conversation.title,
+                    conversation.created_at,
+                    conversation.updated_at,
+                    conversation.hidden,
+                ],
+            )?;
+        Ok(())
+    }
+
+    pub fn list_assistant_conversations(&self) -> Result<Vec<AssistantConversation>, AppError> {
+        let connection = self.connection.lock().expect("store mutex poisoned");
+        let mut statement = connection.prepare(
+            "SELECT id, session_id, title, created_at, updated_at, hidden
+             FROM assistant_conversations WHERE hidden = 0 ORDER BY updated_at DESC",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(AssistantConversation {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                title: row.get(2)?,
+                created_at: row.get(3)?,
+                updated_at: row.get(4)?,
+                hidden: row.get(5)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn hide_assistant_conversation(&self, id: &str) -> Result<(), AppError> {
+        self.connection
+            .lock()
+            .expect("store mutex poisoned")
+            .execute(
+                "UPDATE assistant_conversations SET hidden = 1 WHERE id = ?1",
+                params![id],
+            )?;
+        Ok(())
+    }
+
+    pub fn save_assistant_projection(
+        &self,
+        conversation_id: &str,
+        projection: &serde_json::Value,
+    ) -> Result<(), AppError> {
+        let payload = serde_json::to_string(projection).map_err(|error| {
+            AppError::new("SERIALIZE_ERROR", "无法保存智奈会话投影").with_detail(error.to_string())
+        })?;
+        self.connection
+            .lock()
+            .expect("store mutex poisoned")
+            .execute(
+                "INSERT OR REPLACE INTO assistant_projections(conversation_id, payload, updated_at)
+             VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
+                params![conversation_id, payload],
+            )?;
+        Ok(())
+    }
+
+    pub fn load_assistant_projection(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<serde_json::Value>, AppError> {
+        let payload = self
+            .connection
+            .lock()
+            .expect("store mutex poisoned")
+            .query_row(
+                "SELECT payload FROM assistant_projections WHERE conversation_id = ?1",
+                params![conversation_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        payload
+            .map(|payload| {
+                serde_json::from_str(&payload).map_err(|error| {
+                    AppError::new("DESERIALIZE_ERROR", "无法读取智奈会话投影")
+                        .with_detail(error.to_string())
+                })
+            })
+            .transpose()
     }
 
     pub fn save_script(&self, script: &ProxyScript) -> Result<(), AppError> {

@@ -127,6 +127,43 @@ const descriptions: Record<NetcatToolName, string> = {
   netcat_execute_curl: 'Use a single-use requestHandle previously approved by the user.'
 }
 
+type ToolParameter = {
+  type: 'string' | 'integer'
+  required?: true
+}
+
+export const TOOL_PARAMETER_SCHEMAS: Record<NetcatToolName, Record<string, ToolParameter>> = {
+  netcat_parse_curl: {
+    resourceId: { type: 'string', required: true }
+  },
+  netcat_get_exchange: {
+    resourceId: { type: 'string', required: true }
+  },
+  netcat_find_similar_exchanges: {
+    resourceId: { type: 'string', required: true },
+    limit: { type: 'integer' }
+  },
+  netcat_get_diagnostics: {},
+  netcat_compare_exchanges: {
+    resourceId: { type: 'string', required: true },
+    otherResourceId: { type: 'string', required: true }
+  },
+  netcat_create_mock_draft: {
+    resourceId: { type: 'string', required: true },
+    name: { type: 'string', required: true },
+    status: { type: 'integer', required: true },
+    responseBody: { type: 'string', required: true }
+  },
+  netcat_create_script_draft: {
+    resourceId: { type: 'string', required: true },
+    name: { type: 'string', required: true },
+    source: { type: 'string', required: true }
+  },
+  netcat_execute_curl: {
+    requestHandle: { type: 'string', required: true }
+  }
+}
+
 export interface Config {
   endpoint?: string
   token?: string
@@ -146,35 +183,12 @@ export async function apply(ctx: any, config: Config = {}): Promise<void> {
     }
     const execute = async (args: JsonObject) => validateToolResult(await client.call(toolName, args))
 
-    if (toolName === 'netcat_get_diagnostics') {
-      ctx.tools.register(defineTool({
-        name: toolName,
-        description: descriptions[toolName],
-        parameters: {},
-        output,
-        execute
-      }))
-    } else if (toolName === 'netcat_execute_curl') {
-      ctx.tools.register(defineTool({
-        name: toolName,
-        description: descriptions[toolName],
-        parameters: {
-          requestHandle: { type: 'string', required: true }
-        },
-        output,
-        execute
-      }))
-    } else {
-      ctx.tools.register(defineTool({
-        name: toolName,
-        description: descriptions[toolName],
-        parameters: {
-          resourceId: { type: 'string', required: true },
-          limit: { type: 'integer' }
-        },
-        output,
-        execute
-      }))
-    }
+    ctx.tools.register(defineTool({
+      name: toolName,
+      description: descriptions[toolName],
+      parameters: TOOL_PARAMETER_SCHEMAS[toolName],
+      output,
+      execute
+    }))
   }
 }

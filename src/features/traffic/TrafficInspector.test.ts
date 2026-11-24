@@ -33,6 +33,8 @@ describe('TrafficInspector', () => {
     expect(screen.getByRole('region', { name: '响应正文' })).toHaveTextContent(/"ok": true/)
     await fireEvent.click(screen.getByRole('button', { name: '复制 cURL' }))
     expect(emitted().copyCurl).toEqual([[detail.id]])
+    await fireEvent.click(screen.getByRole('button', { name: '让智奈分析' }))
+    expect(emitted().analyze).toEqual([[detail.id]])
   })
 
   it('shows response bytes in a dedicated Hex editor', async () => {

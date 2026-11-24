@@ -61,7 +61,7 @@ test('controller initializes one runtime and runs named sessions', async () => {
     finalResponse: 'analysis complete',
     finishReason: 'stop'
   })
-  assert.equal((events[0] as any).type, 'session/activity')
+  assert.equal((events[0] as any).type, 'session/status')
 
   await controller.handle('runtime/shutdown', {})
   assert.equal(closed, true)
@@ -89,4 +89,39 @@ test('controller refuses concurrent turns', async () => {
   }), /already running/)
   release()
   await first
+})
+
+test('controller translates tool notifications into stable bridge events', async () => {
+  const events: any[] = []
+  const draft = { id: 'draft-1', kind: 'mock', status: 'pending', payload: { name: '登录失败' } }
+  const controller = new BridgeController(() => ({
+    async start() {},
+    async run(_input: string, options: any) {
+      options.onNotification({
+        method: 'tool.started',
+        params: { toolName: 'netcat_create_mock_draft', toolCallId: 'call-1' }
+      })
+      options.onNotification({
+        method: 'tool.completed',
+        params: { toolName: 'netcat_create_mock_draft', toolCallId: 'call-1', result: draft }
+      })
+      return { sessionId: options.sessionId, finalResponse: 'done', finishReason: 'stop' }
+    },
+    async close() {}
+  }), event => events.push(event))
+  await controller.handle('runtime/initialize', {
+    requestId: 'init', provider: 'deepseek-official', model: 'deepseek-v4-flash', dshHome: '/tmp/h', cwd: '/tmp/w'
+  })
+
+  await controller.handle('session/run', {
+    requestId: 'r1', conversationId: 'c1', sessionId: 's1', operationId: 'o1', input: 'one'
+  })
+
+  assert.equal(events[0].type, 'tool/started')
+  assert.deepEqual(events[0].payload, {
+    toolName: 'netcat_create_mock_draft',
+    toolCallId: 'call-1'
+  })
+  assert.equal(events[1].type, 'tool/completed')
+  assert.deepEqual(events[1].payload.result, draft)
 })
