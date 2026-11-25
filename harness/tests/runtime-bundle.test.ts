@@ -1,14 +1,48 @@
 import assert from 'node:assert/strict'
-import { access, mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { access, lstat, mkdtemp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 
 import {
   buildRuntimeManifest,
+  declareRuntimeDependency,
+  materializeRuntimePackage,
   prepareRuntimeLayout,
   verifyRuntimeFiles
 } from '../runtime/src/bundle.ts'
+
+test('runtime materializes local plugin links for desktop packaging', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'netcat-runtime-materialize-'))
+  const source = join(root, 'packages', 'dsh-plugin')
+  const installed = join(root, 'node_modules', '@netcat', 'dsh-plugin')
+  await mkdir(source, { recursive: true })
+  await mkdir(join(root, 'node_modules', '@netcat'), { recursive: true })
+  await writeFile(join(source, 'package.json'), JSON.stringify({ name: '@netcat/dsh-plugin' }))
+  await writeFile(join(source, 'credentials.js'), 'export const configured = true\n')
+  await symlink('../../packages/dsh-plugin', installed)
+
+  await materializeRuntimePackage(installed, source)
+
+  assert.equal((await lstat(installed)).isSymbolicLink(), false)
+  assert.match(await readFile(join(installed, 'credentials.js'), 'utf8'), /configured = true/)
+})
+
+test('runtime dependency declaration exposes the bundled plugin to DSH resolution', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'netcat-runtime-dependency-'))
+  const manifestPath = join(root, 'package.json')
+  await writeFile(manifestPath, JSON.stringify({
+    name: '@deepseek-ai/dsh',
+    dependencies: { existing: '1.0.0' }
+  }))
+
+  await declareRuntimeDependency(manifestPath, '@netcat/dsh-plugin', '0.6.5')
+
+  assert.deepEqual(JSON.parse(await readFile(manifestPath, 'utf8')).dependencies, {
+    existing: '1.0.0',
+    '@netcat/dsh-plugin': '0.6.5'
+  })
+})
 
 test('runtime manifest hashes every bundled file in stable path order', async () => {
   const root = await mkdtemp(join(tmpdir(), 'netcat-runtime-manifest-'))
@@ -19,7 +53,7 @@ test('runtime manifest hashes every bundled file in stable path order', async ()
   const manifest = await buildRuntimeManifest(root, {
     platform: 'darwin',
     arch: 'arm64',
-    bridgeVersion: '0.6.0'
+    bridgeVersion: '0.6.5'
   })
 
   assert.deepEqual(manifest.files.map(file => file.path), [
@@ -37,7 +71,7 @@ test('runtime verification rejects a file changed after manifest generation', as
   const manifest = await buildRuntimeManifest(root, {
     platform: 'win32',
     arch: 'x64',
-    bridgeVersion: '0.6.0'
+    bridgeVersion: '0.6.5'
   })
 
   await writeFile(join(root, 'node'), 'tampered')

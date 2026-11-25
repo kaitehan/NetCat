@@ -156,7 +156,7 @@ impl AssistantSettings {
         }
         let (_, model) = self.model.split_once('/')?;
         Some(format!(
-            "- name: '@deepseek-ai/dsh-llm-pi-ai'\n  config:\n    providers:\n      {}:\n        displayName: {}\n        apiKeyEnv: OPENAI_API_KEY\n        api: {}\n        baseURL: {}\n        models:\n          - id: {}\n",
+            "- insert:\n    - id: llm-pi-ai\n      name: '@deepseek-ai/dsh-llm-pi-ai'\n      config:\n        providers:\n          {}:\n            displayName: {}\n            apiKeyEnv: OPENAI_API_KEY\n            api: {}\n            baseURL: {}\n            models:\n              - id: {}\n",
             yaml_string(&self.open_ai_provider),
             yaml_string(&self.open_ai_provider),
             yaml_string(&self.open_ai_api),
@@ -284,6 +284,38 @@ mod tests {
         assert_eq!(updated.open_ai_base_url, "https://gateway.example.com/v1");
         assert_eq!(updated.open_ai_api, "openai-completions");
         assert_eq!(AssistantSettingsService::new(store).get().unwrap(), updated);
+    }
+
+    #[test]
+    fn openai_runtime_patch_inserts_the_adapter_plugin_into_the_minimal_profile() {
+        let store = Arc::new(Store::open_in_memory(10, 1_024).unwrap());
+        let service = AssistantSettingsService::new(store);
+        let settings = service
+            .prepare_openai_compatible(
+                "acme-gateway",
+                "acme-chat",
+                "https://gateway.example.com/v1",
+                "openai-completions",
+            )
+            .unwrap();
+
+        assert_eq!(
+            settings.runtime_patch().as_deref(),
+            Some(concat!(
+                "- insert:\n",
+                "    - id: llm-pi-ai\n",
+                "      name: '@deepseek-ai/dsh-llm-pi-ai'\n",
+                "      config:\n",
+                "        providers:\n",
+                "          \"acme-gateway\":\n",
+                "            displayName: \"acme-gateway\"\n",
+                "            apiKeyEnv: OPENAI_API_KEY\n",
+                "            api: \"openai-completions\"\n",
+                "            baseURL: \"https://gateway.example.com/v1\"\n",
+                "            models:\n",
+                "              - id: \"acme-chat\"\n",
+            ))
+        );
     }
 
     #[test]

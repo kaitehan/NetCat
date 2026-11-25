@@ -38,6 +38,28 @@ export interface RuntimeLayoutOptions {
   platform: string
 }
 
+export async function declareRuntimeDependency(
+  manifestPath: string,
+  packageName: string,
+  version: string
+): Promise<void> {
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as {
+    dependencies?: Record<string, string>
+  }
+  manifest.dependencies ??= {}
+  manifest.dependencies[packageName] = version
+  await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
+}
+
+export async function materializeRuntimePackage(
+  installedPath: string,
+  sourcePath: string
+): Promise<void> {
+  await rm(installedPath, { recursive: true, force: true })
+  await mkdir(dirname(installedPath), { recursive: true })
+  await cp(sourcePath, installedPath, { recursive: true, dereference: true })
+}
+
 export async function prepareRuntimeLayout(options: RuntimeLayoutOptions): Promise<void> {
   await rm(options.output, { recursive: true, force: true })
   await mkdir(join(options.output, 'bin'), { recursive: true })
@@ -61,7 +83,7 @@ export async function prepareRuntimeLayout(options: RuntimeLayoutOptions): Promi
   await writeFile(join(options.output, 'runtime', 'package.json'), `${JSON.stringify({
     name: '@netcat/embedded-harness-runtime',
     private: true,
-    version: '0.6.0',
+    version: '0.6.5',
     type: 'module',
     dependencies: {
       '@deepseek-ai/dsh-sdk-client': '0.2.3-alpha.2',

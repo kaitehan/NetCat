@@ -335,8 +335,8 @@ fn protocol_error(error: impl std::fmt::Display) -> AppError {
 }
 
 #[cfg(unix)]
-fn private_ipc_endpoint(_token: &str, dsh_home: &std::path::Path) -> PathBuf {
-    dsh_home.join("netcat-tools.sock")
+fn private_ipc_endpoint(token: &str, _dsh_home: &std::path::Path) -> PathBuf {
+    PathBuf::from(format!("/tmp/netcat-assistant-{token}.sock"))
 }
 
 #[cfg(windows)]
@@ -394,6 +394,20 @@ mod tests {
     };
     use crate::error::AppError;
     use serde_json::Value;
+
+    #[cfg(unix)]
+    #[test]
+    fn private_ipc_endpoint_stays_bindable_for_long_application_data_paths() {
+        use std::os::unix::net::SocketAddr;
+
+        let long_dsh_home = PathBuf::from("/").join("a".repeat(160));
+        let first = super::private_ipc_endpoint("first-token", &long_dsh_home);
+        let second = super::private_ipc_endpoint("second-token", &long_dsh_home);
+
+        assert!(SocketAddr::from_pathname(&first).is_ok());
+        assert!(SocketAddr::from_pathname(&second).is_ok());
+        assert_ne!(first, second);
+    }
 
     #[derive(Default)]
     struct RecordingSink(Mutex<Vec<BridgeEvent>>);

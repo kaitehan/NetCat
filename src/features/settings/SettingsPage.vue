@@ -229,7 +229,8 @@ async function testAssistantConnection() {
   try {
     assistantValidation.value = await assistantClient.testAssistantConnection()
   } catch (cause) {
-    assistantError.value = normalizeDesktopError(cause).message
+    const error = normalizeDesktopError(cause)
+    assistantError.value = error.action ? `${error.message}；${error.action}` : error.message
   } finally {
     assistantBusy.value = false
   }

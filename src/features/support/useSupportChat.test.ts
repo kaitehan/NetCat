@@ -90,6 +90,54 @@ describe('useSupportChat', () => {
     expect(chat.activeConversation.value?.messages.at(-1)?.content).toBe('分析这个请求')
   })
 
+  it('binds a newly created conversation before the model turn so live progress can refresh', async () => {
+    let sessionListener: ((event: { identity: { conversationId: string } }) => Promise<void>) | undefined
+    let resolveSubmit!: (value: AssistantSnapshot) => void
+    const progressSnapshot: AssistantSnapshot = {
+      ...snapshot,
+      messages: [{
+        id: 'message-progress',
+        role: 'user',
+        content: '你好',
+        createdAt: '2026-11-24T10:01:00Z'
+      }],
+      activities: [{
+        id: 'model-progress',
+        kind: 'model',
+        label: '模型正在生成回复',
+        status: 'running',
+        createdAt: '2026-11-24T10:01:01Z'
+      }],
+      status: 'waitingModel'
+    }
+    const api = {
+      ...assistantApi(),
+      listen: vi.fn().mockImplementation(async (_event, listener) => {
+        sessionListener = listener
+        return () => undefined
+      })
+    }
+    api.listAssistantConversations.mockResolvedValue([])
+    api.getAssistantSnapshot
+      .mockResolvedValueOnce({ ...snapshot, messages: [] })
+      .mockResolvedValue(progressSnapshot)
+    api.submitAssistantInput.mockImplementation(() => new Promise(resolve => {
+      resolveSubmit = resolve
+    }))
+    const chat = useSupportChat({ api })
+    await chat.load()
+
+    const submission = chat.sendMessage('你好')
+    await vi.waitFor(() => expect(api.submitAssistantInput).toHaveBeenCalledOnce())
+
+    expect(chat.activeConversation.value?.id).toBe('conversation-1')
+    await sessionListener?.({ identity: { conversationId: 'conversation-1' } })
+    expect(chat.activities.value[0]?.label).toBe('模型正在生成回复')
+
+    resolveSubmit(progressSnapshot)
+    expect(await submission).toBe(true)
+  })
+
   it('submits pasted cURL as an offline curl input', async () => {
     const api = assistantApi()
     const chat = useSupportChat({ api })

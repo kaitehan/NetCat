@@ -145,10 +145,10 @@ describe('SupportChatPanel', () => {
     render(SupportChatPanel, { props: { api, initialExchangeId: 'exchange-42' } })
 
     await waitFor(() => expect(api.createAssistantConversation).toHaveBeenCalledOnce())
-    expect(api.submitAssistantInput).toHaveBeenCalledWith('first', {
-      kind: 'exchange',
-      exchangeId: 'exchange-42'
-    })
+    await waitFor(() => expect(api.submitAssistantInput).toHaveBeenCalledWith('first', {
+        kind: 'exchange',
+        exchangeId: 'exchange-42'
+    }))
   })
 
   it('shows a bounded network preview and executes it only after confirmation', async () => {

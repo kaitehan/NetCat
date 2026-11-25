@@ -121,6 +121,7 @@ export function useSupportChat(options: UseSupportChatOptions = {}) {
       if (!conversation) {
         conversation = await api.createAssistantConversation()
         conversationList.value = sortByUpdatedAt([...conversationList.value, conversation])
+        snapshot.value = await api.getAssistantSnapshot(conversation.id)
       }
       submittedConversationId = conversation.id
       snapshot.value = await api.submitAssistantInput(conversation.id, input)

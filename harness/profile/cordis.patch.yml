@@ -20,10 +20,10 @@
       tools. Never claim that a draft was saved or a request was executed unless
       the corresponding tool result says so.
 
-- id: credentials
-  name: '@netcat/dsh-plugin/credentials'
-
 - insert:
+    - id: credentials
+      name: '@netcat/dsh-plugin/credentials'
+
     - id: netcat-tools
       name: '@netcat/dsh-plugin'
       config:

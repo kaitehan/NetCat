@@ -125,6 +125,7 @@ impl AssistantService {
                 snapshot
                     .messages
                     .push(message("user", content.trim(), &timestamp));
+                upsert_model_activity(&mut snapshot, "正在准备模型请求", "running", &timestamp);
                 snapshot.status = AssistantStatus::WaitingModel;
             }
             AssistantInput::Exchange { exchange_id } => {
@@ -133,6 +134,7 @@ impl AssistantService {
                     format!("分析抓包 {exchange_id}"),
                     &timestamp,
                 ));
+                upsert_model_activity(&mut snapshot, "正在准备模型请求", "running", &timestamp);
                 snapshot.status = AssistantStatus::WaitingModel;
             }
         }
@@ -285,8 +287,19 @@ impl AssistantService {
                 snapshot.status = AssistantStatus::WaitingModel;
             }
             "approval/requested" => snapshot.status = AssistantStatus::WaitingApproval,
-            "session/completed" => snapshot.status = AssistantStatus::Completed,
-            "session/failed" => snapshot.status = AssistantStatus::Error,
+            "session/completed" => {
+                upsert_model_activity(&mut snapshot, "模型处理完成", "completed", &timestamp);
+                snapshot.status = AssistantStatus::Completed;
+            }
+            "session/failed" => {
+                upsert_model_activity(&mut snapshot, "模型请求失败", "failed", &timestamp);
+                snapshot.status =
+                    if payload.get("code").and_then(Value::as_str) == Some("MISSING_CREDENTIAL") {
+                        AssistantStatus::CredentialRequired
+                    } else {
+                        AssistantStatus::Error
+                    };
+            }
             "session/status" => {
                 snapshot.status = match payload.get("status").and_then(Value::as_str) {
                     Some("stopped") => AssistantStatus::Stopped,
@@ -295,7 +308,29 @@ impl AssistantService {
                     _ => AssistantStatus::WaitingModel,
                 };
             }
-            "session/activity" => snapshot.status = AssistantStatus::WaitingModel,
+            "session/activity" => {
+                if let (Some(id), Some(kind), Some(label), Some(status)) = (
+                    event_string(payload, "activityId"),
+                    event_string(payload, "kind"),
+                    event_string(payload, "label"),
+                    event_string(payload, "status"),
+                ) {
+                    if matches!(
+                        status.as_str(),
+                        "pending" | "running" | "completed" | "failed"
+                    ) {
+                        snapshot.activities.retain(|activity| activity.id != id);
+                        snapshot.activities.push(AssistantActivity {
+                            id,
+                            kind,
+                            label,
+                            status,
+                            created_at: timestamp,
+                        });
+                    }
+                }
+                snapshot.status = AssistantStatus::WaitingModel;
+            }
             _ => return Ok(snapshot),
         }
         self.save_snapshot(&snapshot)?;
@@ -348,6 +383,24 @@ fn tool_label(tool_name: &str) -> String {
         "netcat_create_script_draft" => "正在生成 QuickJS 草稿".into(),
         _ => "正在调用 NetCat 工具".into(),
     }
+}
+
+fn upsert_model_activity(
+    snapshot: &mut AssistantSnapshot,
+    label: &str,
+    status: &str,
+    timestamp: &str,
+) {
+    snapshot
+        .activities
+        .retain(|activity| activity.id != "model-progress");
+    snapshot.activities.push(AssistantActivity {
+        id: "model-progress".into(),
+        kind: "model".into(),
+        label: label.into(),
+        status: status.into(),
+        created_at: timestamp.into(),
+    });
 }
 
 fn body_projection(text: Option<&str>, bytes: &[u8], original_bytes: u64) -> Value {
@@ -554,6 +607,55 @@ mod tests {
         assert_eq!(snapshot.activities[0].status, "completed");
         assert_eq!(snapshot.drafts.len(), 1);
         assert_eq!(snapshot.drafts[0].kind, "mock");
+    }
+
+    #[test]
+    fn model_progress_and_failures_are_persisted_as_safe_user_visible_activity() {
+        let service = service();
+        let conversation = service.create_conversation().unwrap();
+
+        let submitted = service
+            .submit(
+                &conversation.id,
+                AssistantInput::Message {
+                    message: "你好".into(),
+                },
+            )
+            .unwrap();
+        assert_eq!(submitted.activities[0].label, "正在准备模型请求");
+        assert_eq!(submitted.activities[0].status, "running");
+
+        service
+            .apply_bridge_event(
+                &conversation.id,
+                "session/activity",
+                &serde_json::json!({
+                    "activityId": "model-progress",
+                    "kind": "model",
+                    "label": "模型正在生成回复",
+                    "status": "running"
+                }),
+            )
+            .unwrap();
+        let failed = service
+            .apply_bridge_event(
+                &conversation.id,
+                "session/failed",
+                &serde_json::json!({
+                    "code": "MISSING_CREDENTIAL",
+                    "message": "OpenAI API Key is not configured"
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(failed.status, AssistantStatus::CredentialRequired);
+        assert_eq!(failed.activities.len(), 1);
+        assert_eq!(failed.activities[0].label, "模型请求失败");
+        assert_eq!(failed.activities[0].status, "failed");
+        assert!(failed
+            .messages
+            .iter()
+            .all(|message| !message.content.is_empty()));
     }
 
     #[test]

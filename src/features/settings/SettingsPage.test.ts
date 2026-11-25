@@ -149,6 +149,37 @@ describe('SettingsPage', () => {
     expect(testConnection).toBeDisabled()
   })
 
+  it('shows actionable guidance when an OpenAI-compatible gateway rejects the request', async () => {
+    const assistantApi = {
+      getAssistantSettings: vi.fn().mockResolvedValue({
+        provider: 'openAi',
+        model: 'openai/gpt-5.6-sol',
+        openAiProvider: 'openai',
+        openAiBaseUrl: 'https://token.longshine.com/v1',
+        openAiApi: 'openai-completions'
+      }),
+      saveAssistantSettings: vi.fn(),
+      describeAssistantCredential: vi.fn().mockResolvedValue({ provider: 'openAi', configured: true, maskedValue: '********' }),
+      saveAssistantCredential: vi.fn(),
+      deleteAssistantCredential: vi.fn(),
+      validateAssistantCredential: vi.fn(),
+      testAssistantConnection: vi.fn().mockRejectedValue({
+        code: 'ASSISTANT_CONNECTION_TEST_FAILED',
+        message: '协议测试请求失败（HTTP 403）：model access denied',
+        action: '请确认 API Key 权限、模型授权以及网关访问策略'
+      }),
+      restartAssistant: vi.fn()
+    }
+    render(SettingsPage, { props: { ...props, assistantApi } })
+
+    await fireEvent.click(screen.getByRole('tab', { name: '智奈配置' }))
+    await fireEvent.click(await screen.findByRole('button', { name: '测试连接' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      '协议测试请求失败（HTTP 403）：model access denied；请确认 API Key 权限、模型授权以及网关访问策略'
+    )
+  })
+
   it('switches capture source while stopped and exposes the bounded idle timeout', async () => {
     const { emitted } = render(SettingsPage, { props })
 

@@ -4,6 +4,7 @@ export interface HarnessLike {
     sessionId: string
     finalResponse: string
     finishReason: string | null
+    events?: unknown[]
   }>
   resumeSession?(sessionId: string): Promise<unknown>
   close(): Promise<void>
@@ -28,7 +29,7 @@ function record(value: unknown): Params | null {
     : null
 }
 
-function notificationEvent(notification: unknown): { type: string; payload: Params } {
+function notificationEvent(notification: unknown): { type: string; payload: Params } | null {
   const value = record(notification)
   const method = typeof value?.method === 'string' ? value.method.replaceAll('.', '/') : ''
   const params = record(value?.params) ?? {}
@@ -38,7 +39,71 @@ function notificationEvent(notification: unknown): { type: string; payload: Para
   if (method === 'session/status') {
     return { type: 'session/status', payload: params }
   }
-  return { type: 'session/activity', payload: { notification } }
+  if (method === 'session/event') {
+    const event = record(params.event)
+    if (event?.type === 'turn/start') {
+      return {
+        type: 'session/activity',
+        payload: modelActivity('正在准备模型请求')
+      }
+    }
+    if (event?.type === 'assistant/attempt') {
+      return {
+        type: 'session/activity',
+        payload: modelActivity('模型正在生成回复')
+      }
+    }
+  }
+  return null
+}
+
+function modelActivity(label: string): Params {
+  return {
+    activityId: 'model-progress',
+    kind: 'model',
+    label,
+    status: 'running'
+  }
+}
+
+class ModelTurnError extends Error {
+  readonly code: string
+
+  constructor(code: string, message: string) {
+    super(message)
+    this.code = code
+  }
+}
+
+function modelTurnError(result: {
+  finalResponse: string
+  finishReason: string | null
+  events?: unknown[]
+}): ModelTurnError | null {
+  const terminal = result.events
+    ?.map(record)
+    .findLast(event => event?.type === 'turn/end')
+  const reason = record(record(terminal?.data)?.reason)
+  const error = record(reason?.error)
+  if (result.finishReason === 'error' || reason?.kind === 'error') {
+    const code = typeof error?.code === 'string' ? error.code : 'MODEL_REQUEST_FAILED'
+    const rawMessage = typeof error?.message === 'string' && error.message.length > 0
+      ? error.message
+      : '模型请求失败'
+    return new ModelTurnError(code, safeModelError(code, rawMessage))
+  }
+  if (!result.finalResponse.trim()) {
+    return new ModelTurnError('EMPTY_MODEL_RESPONSE', '模型未返回可显示内容')
+  }
+  return null
+}
+
+function safeModelError(code: string, message: string): string {
+  if (code === 'MISSING_CREDENTIAL') return '当前服务商尚未配置 API Key'
+  return message
+    .replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
+    .replace(/\bsk-[A-Za-z0-9._-]+\b/g, '[REDACTED]')
+    .slice(0, 500)
 }
 
 function requiredString(params: Params, name: string): string {
@@ -119,6 +184,7 @@ export class BridgeController {
         sessionId,
         onNotification: notification => {
           const event = notificationEvent(notification)
+          if (!event) return
           this.emit({
             type: event.type,
             requestId,
@@ -129,6 +195,8 @@ export class BridgeController {
           })
         }
       })
+      const turnError = modelTurnError(result)
+      if (turnError) throw turnError
       const response = {
         sessionId: result.sessionId,
         finalResponse: result.finalResponse,
@@ -144,13 +212,14 @@ export class BridgeController {
       })
       return response
     } catch (error) {
+      const code = error instanceof ModelTurnError ? error.code : 'MODEL_REQUEST_FAILED'
       this.emit({
         type: 'session/failed',
         requestId,
         conversationId,
         sessionId,
         operationId,
-        payload: { message: error instanceof Error ? error.message : String(error) }
+        payload: { code, message: error instanceof Error ? error.message : String(error) }
       })
       throw error
     } finally {

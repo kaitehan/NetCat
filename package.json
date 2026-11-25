@@ -1,7 +1,7 @@
 {
   "name": "netcat",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.6.5",
   "author": "kaite han",
   "type": "module",
   "workspaces": [

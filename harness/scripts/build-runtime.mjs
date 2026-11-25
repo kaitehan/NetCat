@@ -6,6 +6,8 @@ import { spawn } from 'node:child_process'
 
 import {
   buildRuntimeManifest,
+  declareRuntimeDependency,
+  materializeRuntimePackage,
   prepareRuntimeLayout,
   verifyRuntimeFiles
 } from '../dist/runtime/src/bundle.js'
@@ -62,10 +64,22 @@ try {
     '--package-lock=false'
   ], join(output, 'runtime'))
 
+  await materializeRuntimePackage(
+    join(output, 'runtime', 'node_modules', '@netcat', 'dsh-plugin'),
+    join(output, 'runtime', 'packages', 'dsh-plugin')
+  )
+
+  const pluginManifest = JSON.parse(await readFile(join(plugin, 'package.json'), 'utf8'))
+  await declareRuntimeDependency(
+    join(output, 'runtime', 'node_modules', '@deepseek-ai', 'dsh', 'package.json'),
+    '@netcat/dsh-plugin',
+    pluginManifest.version
+  )
+
   const manifest = await buildRuntimeManifest(output, {
     platform: process.platform,
     arch: process.arch,
-    bridgeVersion: '0.6.0'
+    bridgeVersion: '0.6.5'
   })
   await verifyRuntimeFiles(output, manifest)
   const bytes = (await Promise.all(manifest.files.map(async file => {

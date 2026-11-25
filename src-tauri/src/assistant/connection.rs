@@ -63,12 +63,7 @@ pub async fn test_openai_connection(
         .send()
         .await
         .map_err(connection_error)?;
-    if !response.status().is_success() {
-        return Err(AppError::new(
-            "ASSISTANT_CONNECTION_TEST_FAILED",
-            format!("协议测试请求失败（HTTP {}）", response.status().as_u16()),
-        ));
-    }
+    let status = response.status();
     if response
         .content_length()
         .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
@@ -78,18 +73,22 @@ pub async fn test_openai_connection(
             "协议测试响应超过 1 MiB 限制",
         ));
     }
-
-    let mut bytes = Vec::new();
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(connection_error)?;
-        if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
-            return Err(AppError::new(
-                "ASSISTANT_CONNECTION_TEST_FAILED",
-                "协议测试响应超过 1 MiB 限制",
-            ));
-        }
-        bytes.extend_from_slice(&chunk);
+    let bytes = read_bounded_response(response).await?;
+    if !status.is_success() {
+        let detail = safe_error_detail(&bytes, key);
+        let message = detail.map_or_else(
+            || format!("协议测试请求失败（HTTP {}）", status.as_u16()),
+            |detail| format!("协议测试请求失败（HTTP {}）：{detail}", status.as_u16()),
+        );
+        let mut error = AppError::new("ASSISTANT_CONNECTION_TEST_FAILED", message);
+        error = match status.as_u16() {
+            401 | 403 => error.with_action("请确认 API Key 权限、模型授权以及网关访问策略"),
+            404 | 405 => error.with_action(
+                "请确认网关支持当前 API 协议，或切换 Responses / Chat Completions 后重试",
+            ),
+            _ => error.with_action("请检查服务商状态和模型配置后重试"),
+        };
+        return Err(error);
     }
 
     let _: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
@@ -102,6 +101,47 @@ pub async fn test_openai_connection(
     Ok(format!(
         "连接成功，模型 {model} 已通过 {protocol_label} 测试。"
     ))
+}
+
+async fn read_bounded_response(response: reqwest::Response) -> Result<Vec<u8>, AppError> {
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(connection_error)?;
+        if bytes.len() + chunk.len() > MAX_RESPONSE_BYTES {
+            return Err(AppError::new(
+                "ASSISTANT_CONNECTION_TEST_FAILED",
+                "协议测试响应超过 1 MiB 限制",
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+fn safe_error_detail(bytes: &[u8], key: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    let message = value
+        .pointer("/error/message")
+        .or_else(|| value.get("message"))?
+        .as_str()?;
+    let normalized = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+    let redacted = normalized
+        .replace(key, "[REDACTED]")
+        .split_whitespace()
+        .map(|word| {
+            if word.starts_with("sk-") {
+                "[REDACTED]"
+            } else {
+                word
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    Some(redacted.chars().take(300).collect())
 }
 
 fn connection_error(error: impl std::fmt::Display) -> AppError {
@@ -123,6 +163,13 @@ mod tests {
     };
 
     async fn serve_response(status: &'static str) -> (String, Arc<Mutex<String>>) {
+        serve_response_with_body(status, r#"{"id":"test-response"}"#).await
+    }
+
+    async fn serve_response_with_body(
+        status: &'static str,
+        body: &'static str,
+    ) -> (String, Arc<Mutex<String>>) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let request = Arc::new(Mutex::new(String::new()));
@@ -132,7 +179,6 @@ mod tests {
             let mut bytes = vec![0_u8; 4096];
             let count = stream.read(&mut bytes).await.unwrap();
             *captured.lock().unwrap() = String::from_utf8_lossy(&bytes[..count]).into_owned();
-            let body = r#"{"id":"test-response"}"#;
             let response = format!(
                 "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
@@ -188,7 +234,11 @@ mod tests {
 
     #[tokio::test]
     async fn reports_protocol_http_failures() {
-        let (base_url, _) = serve_response("404 Not Found").await;
+        let (base_url, _) = serve_response_with_body(
+            "403 Forbidden",
+            r#"{"error":{"message":"API key sk-secret-token has no access to this model"}}"#,
+        )
+        .await;
 
         let error =
             test_openai_connection(&settings(base_url, "openai-responses"), "sk-local-test")
@@ -196,5 +246,14 @@ mod tests {
                 .unwrap_err();
 
         assert_eq!(error.code, "ASSISTANT_CONNECTION_TEST_FAILED");
+        assert_eq!(
+            error.message,
+            "协议测试请求失败（HTTP 403）：API key [REDACTED] has no access to this model"
+        );
+        assert_eq!(
+            error.action.as_deref(),
+            Some("请确认 API Key 权限、模型授权以及网关访问策略")
+        );
+        assert!(!error.message.contains("sk-secret-token"));
     }
 }
