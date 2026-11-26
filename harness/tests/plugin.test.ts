@@ -10,8 +10,9 @@ import {
 } from '../plugin-netcat/src/index.ts'
 import { NetcatCredentialClient } from '../plugin-netcat/src/credentials.ts'
 
-test('plugin exposes only the eight approved NetCat tools', () => {
+test('plugin exposes only the nine approved NetCat tools', () => {
   assert.deepEqual(NETCAT_TOOL_NAMES, [
+    'netcat_search_exchanges',
     'netcat_parse_curl',
     'netcat_get_exchange',
     'netcat_find_similar_exchanges',
@@ -24,6 +25,13 @@ test('plugin exposes only the eight approved NetCat tools', () => {
 })
 
 test('each NetCat tool exposes its own least-privilege parameter schema', () => {
+  assert.deepEqual(Object.keys(TOOL_PARAMETER_SCHEMAS.netcat_search_exchanges), [
+    'query',
+    'domain',
+    'method',
+    'statusGroup',
+    'limit'
+  ])
   assert.deepEqual(Object.keys(TOOL_PARAMETER_SCHEMAS.netcat_compare_exchanges), [
     'resourceId',
     'otherResourceId'

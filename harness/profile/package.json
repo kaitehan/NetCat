@@ -1,10 +1,10 @@
 {
   "name": "@netcat/assistant-profile",
   "private": true,
-  "version": "0.6.5",
+  "version": "0.8.3",
   "type": "module",
   "dependencies": {
     "@deepseek-ai/dsh-sdk-minimal": "0.2.3-alpha.2",
-    "@netcat/dsh-plugin": "0.6.5"
+    "@netcat/dsh-plugin": "0.8.3"
   }
 }

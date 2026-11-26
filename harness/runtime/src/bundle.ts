@@ -83,7 +83,7 @@ export async function prepareRuntimeLayout(options: RuntimeLayoutOptions): Promi
   await writeFile(join(options.output, 'runtime', 'package.json'), `${JSON.stringify({
     name: '@netcat/embedded-harness-runtime',
     private: true,
-    version: '0.6.5',
+    version: '0.8.3',
     type: 'module',
     dependencies: {
       '@deepseek-ai/dsh-sdk-client': '0.2.3-alpha.2',

@@ -97,6 +97,7 @@ export interface DesktopApi {
   exportHar(): Promise<void>
   copyCurl(id: string): Promise<void>
   copyExchange(id: string, kind: TrafficCopyKind): Promise<void>
+  buildExchangeCopy(id: string, kind: TrafficCopyKind): Promise<string>
   replayExchange(id: string, mode: ReplayMode): Promise<ReplayResult>
   getReplayDraft?(id: string): Promise<ReplayDraft>
   sendReplay?(request: ReplayRequest): Promise<ReplayResult>
@@ -108,6 +109,7 @@ export interface DesktopApi {
   getAssistantSnapshot(conversationId: string): Promise<AssistantSnapshot>
   renameAssistantConversation(conversationId: string, title: string): Promise<AssistantConversation>
   hideAssistantConversation(conversationId: string): Promise<void>
+  appendAssistantError(conversationId: string, content: string): Promise<AssistantSnapshot>
   submitAssistantInput(conversationId: string, input: AssistantInput): Promise<AssistantSnapshot>
   authorizeAssistantNetworkRequest(conversationId: string): Promise<string>
   executeAssistantNetworkRequest(conversationId: string, requestHandle: string): Promise<AssistantSnapshot>
@@ -477,14 +479,14 @@ const browserApi: DesktopApi = {
   },
   async exportHar() {},
   async copyCurl(id) {
-    const row = browserRows.find((candidate) => candidate.id === id)
-    if (row) {
-      await navigator.clipboard?.writeText(`curl -X '${row.method}' '${row.url}'`)
-    }
+    await navigator.clipboard?.writeText(await this.buildExchangeCopy(id, 'curl'))
   },
   async copyExchange(id, kind) {
+    await navigator.clipboard?.writeText(await this.buildExchangeCopy(id, kind))
+  },
+  async buildExchangeCopy(id, kind) {
     const detail = await this.getTrafficDetail(id)
-    const value = kind === 'url'
+    return kind === 'url'
       ? detail.url
       : kind === 'responseBody'
         ? detail.responseBodyText ?? ''
@@ -493,7 +495,6 @@ const browserApi: DesktopApi = {
           : kind === 'responseHeaders'
             ? Object.entries(detail.responseHeaders).map(([name, value]) => `${name}: ${value}`).join('\n')
             : `curl -X '${detail.method}' '${detail.url}'`
-    await navigator.clipboard?.writeText(value)
   },
   async replayExchange(id) {
     const original = await this.getTrafficDetail(id)
@@ -589,14 +590,39 @@ const browserApi: DesktopApi = {
     const conversation = browserAssistantConversations.find((item) => item.id === conversationId)
     if (conversation) conversation.hidden = true
   },
+  async appendAssistantError(conversationId, content) {
+    const snapshot = await this.getAssistantSnapshot(conversationId)
+    const next = {
+      ...snapshot,
+      messages: [...snapshot.messages, {
+        id: crypto.randomUUID(),
+        role: 'system' as const,
+        content,
+        createdAt: new Date().toISOString(),
+        messageType: 'error' as const
+      }]
+    }
+    browserAssistantSnapshots.set(conversationId, next)
+    return next
+  },
   async submitAssistantInput(conversationId, input) {
     const snapshot = await this.getAssistantSnapshot(conversationId)
     const timestamp = new Date().toISOString()
-    const content = input.kind === 'message'
-      ? input.message
-      : input.kind === 'curl'
-        ? input.curl
-        : `分析抓包 ${input.exchangeId}`
+    let content: string
+    if (input.kind === 'message') {
+      content = input.message
+    } else if (input.kind === 'curl') {
+      const method = input.curl.match(/(?:^|\s)(?:-X|--request)\s+['"]?([^\s'"]+)/i)?.[1]?.toUpperCase() ?? 'GET'
+      const rawUrl = input.curl.match(/https?:\/\/[^\s'"]+/i)?.[0]
+      let url = '请求'
+      if (rawUrl) {
+        const parsed = new URL(rawUrl)
+        url = `${parsed.origin}${parsed.pathname}`
+      }
+      content = `分析 ${method} ${url}`
+    } else {
+      content = '分析所选抓包'
+    }
     const messages = [
       ...snapshot.messages,
       { id: crypto.randomUUID(), role: 'user' as const, content, createdAt: timestamp },
@@ -733,13 +759,14 @@ const tauriApi: DesktopApi = {
     }
   },
   async copyCurl(id) {
-    const command = await invoke<string>('build_exchange_copy', { exchangeId: id, kind: 'curl' })
+    const command = await this.buildExchangeCopy(id, 'curl')
     await writeText(command)
   },
   async copyExchange(id, kind) {
-    const content = await invoke<string>('build_exchange_copy', { exchangeId: id, kind })
+    const content = await this.buildExchangeCopy(id, kind)
     await writeText(content)
   },
+  buildExchangeCopy: (id, kind) => invoke('build_exchange_copy', { exchangeId: id, kind }),
   replayExchange: (id, mode) => invoke('replay_exchange', { exchangeId: id, mode }),
   getReplayDraft: (id) => invoke('get_replay_draft', { exchangeId: id }),
   sendReplay: (request) => invoke('send_replay', { request }),
@@ -751,6 +778,7 @@ const tauriApi: DesktopApi = {
   getAssistantSnapshot: (conversationId) => invoke('get_assistant_snapshot', { conversationId }),
   renameAssistantConversation: (conversationId, title) => invoke('rename_assistant_conversation', { conversationId, title }),
   hideAssistantConversation: (conversationId) => invoke('hide_assistant_conversation', { conversationId }),
+  appendAssistantError: (conversationId, content) => invoke('append_assistant_error', { conversationId, content }),
   submitAssistantInput: (conversationId, input) => invoke('submit_assistant_input', { conversationId, input }),
   authorizeAssistantNetworkRequest: (conversationId) => invoke('authorize_assistant_network_request', { conversationId }),
   executeAssistantNetworkRequest: (conversationId, requestHandle) => invoke('execute_assistant_network_request', { conversationId, requestHandle }),

@@ -7,9 +7,17 @@ use serde::{Deserialize, Serialize};
     rename_all_fields = "camelCase"
 )]
 pub enum AssistantInput {
-    Message { message: String },
-    Curl { curl: String },
-    Exchange { exchange_id: String },
+    Message {
+        message: String,
+    },
+    Curl {
+        curl: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_exchange_id: Option<String>,
+    },
+    Exchange {
+        exchange_id: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +101,47 @@ pub struct AssistantMessage {
     pub role: String,
     pub content: String,
     pub created_at: String,
+    #[serde(default = "default_message_type")]
+    pub message_type: String,
+    #[serde(default)]
+    pub model_visible: bool,
+}
+
+fn default_message_type() -> String {
+    "normal".into()
+}
+
+#[cfg(test)]
+mod message_tests {
+    use super::{AssistantDraft, AssistantMessage};
+
+    #[test]
+    fn old_messages_default_to_normal_type() {
+        let message: AssistantMessage = serde_json::from_value(serde_json::json!({
+            "id": "message-1",
+            "role": "assistant",
+            "content": "你好",
+            "createdAt": "2026-11-25T10:00:00Z"
+        }))
+        .unwrap();
+
+        assert_eq!(message.message_type, "normal");
+        assert!(!message.model_visible);
+    }
+
+    #[test]
+    fn old_drafts_default_to_unbound_timeline_metadata() {
+        let draft: AssistantDraft = serde_json::from_value(serde_json::json!({
+            "id": "draft-1",
+            "kind": "trafficSearch",
+            "payload": {},
+            "status": "pending"
+        }))
+        .unwrap();
+
+        assert_eq!(draft.message_id, None);
+        assert_eq!(draft.created_at, None);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,6 +161,20 @@ pub struct AssistantDraft {
     pub kind: String,
     pub payload: serde_json::Value,
     pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub created_at: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssistantRequestContext {
+    pub method: String,
+    pub url: String,
+    pub host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_exchange_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

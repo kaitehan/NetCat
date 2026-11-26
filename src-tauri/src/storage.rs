@@ -3,7 +3,7 @@ use std::{collections::HashSet, path::Path, sync::Mutex};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::{
-    assistant::models::AssistantConversation,
+    assistant::models::{AssistantConversation, AssistantRequestContext},
     body::decode_body_text,
     error::AppError,
     models::{
@@ -876,6 +876,103 @@ impl Store {
                 })
             })
             .transpose()
+    }
+
+    pub fn save_assistant_source_exchange(
+        &self,
+        conversation_id: &str,
+        exchange_id: &str,
+    ) -> Result<(), AppError> {
+        self.save_assistant_request_context(
+            conversation_id,
+            &AssistantRequestContext {
+                method: String::new(),
+                url: String::new(),
+                host: String::new(),
+                source_exchange_id: Some(exchange_id.to_owned()),
+            },
+        )
+    }
+
+    pub fn save_assistant_request_context(
+        &self,
+        conversation_id: &str,
+        context: &AssistantRequestContext,
+    ) -> Result<(), AppError> {
+        let id = format!("source:{conversation_id}");
+        let projection = serde_json::to_string(context).map_err(|error| {
+            AppError::new("SERIALIZE_ERROR", "无法保存智奈会话来源").with_detail(error.to_string())
+        })?;
+        self.connection
+            .lock()
+            .expect("store mutex poisoned")
+            .execute(
+                "INSERT OR REPLACE INTO assistant_operations(
+                   id, conversation_id, input_projection, status, created_at, updated_at
+                 ) VALUES (
+                   ?1, ?2, ?3, 'context',
+                   COALESCE((SELECT created_at FROM assistant_operations WHERE id = ?1), strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                   strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                 )",
+                params![id, conversation_id, projection],
+            )?;
+        Ok(())
+    }
+
+    pub fn load_assistant_request_context(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<AssistantRequestContext>, AppError> {
+        let id = format!("source:{conversation_id}");
+        let projection = self
+            .connection
+            .lock()
+            .expect("store mutex poisoned")
+            .query_row(
+                "SELECT input_projection FROM assistant_operations WHERE id = ?1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        projection
+            .map(|projection| {
+                let value =
+                    serde_json::from_str::<serde_json::Value>(&projection).map_err(|error| {
+                        AppError::new("DESERIALIZE_ERROR", "无法读取智奈会话来源")
+                            .with_detail(error.to_string())
+                    })?;
+                Ok(AssistantRequestContext {
+                    method: value
+                        .get("method")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    url: value
+                        .get("url")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    host: value
+                        .get("host")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    source_exchange_id: value
+                        .get("sourceExchangeId")
+                        .and_then(serde_json::Value::as_str)
+                        .map(ToOwned::to_owned),
+                })
+            })
+            .transpose()
+    }
+
+    pub fn load_assistant_source_exchange(
+        &self,
+        conversation_id: &str,
+    ) -> Result<Option<String>, AppError> {
+        Ok(self
+            .load_assistant_request_context(conversation_id)?
+            .and_then(|context| context.source_exchange_id))
     }
 
     pub fn save_script(&self, script: &ProxyScript) -> Result<(), AppError> {

@@ -26,6 +26,7 @@ export function filterTraffic(
 ): TrafficSummary[] {
   const query = filter.query.trim().toLocaleLowerCase()
   const host = filter.host.trim().toLocaleLowerCase()
+  const domain = filter.domain.trim().replace(/^\.+|\.+$/g, '').toLocaleLowerCase()
 
   return rows.filter((row) => {
     const normalized = normalizedFields(row)
@@ -34,6 +35,9 @@ export function filterTraffic(
       || normalized.host.includes(query)
     const methodMatches = filter.method === 'ALL' || row.method === filter.method
     const hostMatches = !host || normalized.host === host
+    const domainMatches = !domain
+      || normalized.host === domain
+      || normalized.host.endsWith(`.${domain}`)
     const statusMatches = filter.status === 'ALL'
       || (filter.status === '2xx' && row.status !== null && row.status >= 200 && row.status < 300)
       || (filter.status === '3xx' && row.status !== null && row.status >= 300 && row.status < 400)
@@ -41,6 +45,6 @@ export function filterTraffic(
       || (filter.status === '5xx' && row.status !== null && row.status >= 500 && row.status < 600)
       || (filter.status === 'ERR' && row.error !== null)
 
-    return keywordMatches && methodMatches && hostMatches && statusMatches
+    return keywordMatches && methodMatches && hostMatches && domainMatches && statusMatches
   })
 }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import { Braces, Save } from '@lucide/vue'
+import { ArrowRight, Braces } from '@lucide/vue'
 import type { AssistantDraft, MockRule } from '../../shared/types'
 
 const { draft, pending } = defineProps<{
@@ -9,34 +9,36 @@ const { draft, pending } = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  save: [rule: MockRule]
+  prepare: [rule: MockRule]
 }>()
 
 const rule = computed(() => ({
   ...(draft.payload as unknown as MockRule),
   enabled: false
 }))
+const superseded = computed(() => draft.status === 'superseded')
 </script>
 
 <template>
   <section class="assistant-draft" aria-label="Mock 草稿">
     <header>
-      <span><Braces :size="14" />Mock 草稿</span>
+      <span><Braces :size="14" />{{ superseded ? 'Mock 草稿 · 已被后续操作替代' : 'Mock 草稿' }}</span>
       <strong>{{ rule.name }}</strong>
     </header>
     <p class="draft-target">{{ rule.methods.join(', ') }} · {{ rule.urlPattern }}</p>
-    <pre>{{ rule.status }}
+    <pre v-if="!superseded">{{ rule.status }}
 {{ rule.responseBody }}</pre>
-    <footer>
-      <span>保存后保持停用，可在 Mock 页面检查并启用。</span>
+    <p v-else class="superseded-status">状态码：{{ rule.status }}</p>
+    <footer v-if="!superseded">
+      <span>是否按以上信息建立 Mock 规则？确认后会打开 Mock 页面供你检查。</span>
       <button
         type="button"
         :disabled="pending || draft.status !== 'pending'"
-        aria-label="保存 Mock 草稿"
-        @click="emit('save', rule)"
+        aria-label="按以上信息创建 Mock 规则"
+        @click="emit('prepare', rule)"
       >
-        <Save :size="13" />
-        保存
+        创建规则
+        <ArrowRight :size="13" />
       </button>
     </footer>
   </section>
@@ -87,6 +89,12 @@ header strong {
   overflow-wrap: anywhere;
   color: var(--text-secondary);
   font-family: var(--font-mono);
+  font-size: var(--font-size-2xs);
+}
+
+.superseded-status {
+  margin: 0;
+  color: var(--text-muted);
   font-size: var(--font-size-2xs);
 }
 

@@ -23,6 +23,7 @@ const sensitiveCount = computed(() => Array.isArray(draft.payload.sensitiveField
   : 0)
 const tlsVerification = computed(() => draft.payload.tlsVerification !== false)
 const insecureOptionIgnored = computed(() => draft.payload.insecureOptionIgnored === true)
+const superseded = computed(() => draft.status === 'superseded')
 
 function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0 B'
@@ -38,14 +39,14 @@ function formatBytes(bytes: number): string {
         <Globe :size="15" />
         <strong>{{ domain }}</strong>
       </div>
-      <span class="request-summary">{{ method }} · {{ formatBytes(bodyBytes) }}</span>
+      <span class="request-summary">{{ superseded ? '已被后续操作替代' : `${method} · ${formatBytes(bodyBytes)}` }}</span>
     </header>
 
-    <div v-if="resolvedIps.length > 0" class="resolved-ips" aria-label="解析地址">
+    <div v-if="!superseded && resolvedIps.length > 0" class="resolved-ips" aria-label="解析地址">
       <code v-for="ip in resolvedIps" :key="ip">{{ ip }}</code>
     </div>
 
-    <div class="network-safety">
+    <div v-if="!superseded" class="network-safety">
       <span :class="{ warning: !tlsVerification }">
         <ShieldCheck v-if="tlsVerification" :size="13" />
         <ShieldAlert v-else :size="13" />
@@ -57,11 +58,11 @@ function formatBytes(bytes: number): string {
       </span>
     </div>
 
-    <p v-if="insecureOptionIgnored" class="network-warning">
+    <p v-if="!superseded && insecureOptionIgnored" class="network-warning">
       已忽略 cURL 中关闭证书校验的选项。
     </p>
 
-    <footer class="network-draft-footer">
+    <footer v-if="!superseded" class="network-draft-footer">
       <span>此授权仅生效一次，有效期五分钟。</span>
       <button
         type="button"

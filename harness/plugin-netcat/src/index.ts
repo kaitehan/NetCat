@@ -4,6 +4,7 @@ export const name = 'netcat-tools'
 export const inject = ['tools']
 
 export const NETCAT_TOOL_NAMES = [
+  'netcat_search_exchanges',
   'netcat_parse_curl',
   'netcat_get_exchange',
   'netcat_find_similar_exchanges',
@@ -117,6 +118,7 @@ function socketTransport(endpoint: string): Transport {
 }
 
 const descriptions: Record<NetcatToolName, string> = {
+  netcat_search_exchanges: 'Search captured exchanges by visible URL, domain, method, and status conditions without requiring a resourceId.',
   netcat_parse_curl: 'Read the redacted structured cURL request identified by resourceId.',
   netcat_get_exchange: 'Read one redacted captured HTTP exchange by resourceId.',
   netcat_find_similar_exchanges: 'Find a bounded list of similar captured exchanges.',
@@ -133,6 +135,13 @@ type ToolParameter = {
 }
 
 export const TOOL_PARAMETER_SCHEMAS: Record<NetcatToolName, Record<string, ToolParameter>> = {
+  netcat_search_exchanges: {
+    query: { type: 'string' },
+    domain: { type: 'string' },
+    method: { type: 'string' },
+    statusGroup: { type: 'integer' },
+    limit: { type: 'integer' }
+  },
   netcat_parse_curl: {
     resourceId: { type: 'string', required: true }
   },

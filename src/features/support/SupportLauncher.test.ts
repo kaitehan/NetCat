@@ -4,11 +4,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import SupportLauncher from './SupportLauncher.vue'
 
 const greetings = [
-  '你好，我是小橘，有什么可以帮你？',
-  '遇到抓包问题了吗？小橘来帮你看看。',
-  '代理或证书配置不顺利？可以问问小橘。',
+  '你好，我是智奈，有什么可以帮你？',
+  '遇到抓包问题了吗？智奈来帮你看看。',
+  '代理或证书配置不顺利？可以问问智奈。',
   'Mock 没有按预期生效？我们一起排查一下。',
-  '网络调试卡住了？小橘随时在这里。'
+  '网络调试卡住了？智奈随时在这里。'
 ]
 
 function setReducedMotion(reduced: boolean) {

@@ -14,7 +14,7 @@ use crate::{
 
 use super::{
     credentials::{CredentialService, NativeCredentialBackend},
-    models::{AssistantInput, AssistantProvider},
+    models::AssistantProvider,
     network::PendingRequestManager,
     private_ipc::PrivateIpcService,
     redaction::redact_url_string,
@@ -79,14 +79,98 @@ impl NetcatPrivateIpcService {
 
     fn exchange(&self, params: &Value) -> Result<Value, AppError> {
         let exchange_id = required_string(params, "resourceId")?;
-        let projection = AssistantService::new(Arc::clone(&self.store))
-            .model_input(&AssistantInput::Exchange {
-                exchange_id: exchange_id.into(),
-            })?
-            .ok_or_else(|| AppError::new("ASSISTANT_TOOL_ERROR", "抓包投影不可用"))?;
+        let projection =
+            AssistantService::new(Arc::clone(&self.store)).exchange_model_input(exchange_id)?;
         serde_json::from_str(&projection).map_err(|error| {
             AppError::new("ASSISTANT_TOOL_ERROR", "抓包投影无效").with_detail(error.to_string())
         })
+    }
+
+    fn search_exchanges(&self, params: &Value) -> Result<Value, AppError> {
+        let query = optional_string(params, "query")
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        let domain = optional_string(params, "domain")
+            .unwrap_or_default()
+            .trim()
+            .trim_matches('.')
+            .to_lowercase();
+        if query.is_empty() && domain.is_empty() {
+            return Err(AppError::new(
+                "ASSISTANT_TOOL_ARGUMENT_INVALID",
+                "query 与 domain 至少需要提供一个",
+            ));
+        }
+        let method = optional_string(params, "method")
+            .filter(|value| !value.trim().is_empty())
+            .map(|value| value.trim().to_uppercase());
+        let status_group = params
+            .get("statusGroup")
+            .and_then(Value::as_u64)
+            .map(|value| value as u16);
+        if status_group.is_some_and(|value| !(2..=5).contains(&value)) {
+            return Err(AppError::new(
+                "ASSISTANT_TOOL_ARGUMENT_INVALID",
+                "statusGroup 只支持 2、3、4、5",
+            ));
+        }
+        let limit = params
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(20)
+            .clamp(1, 50) as usize;
+        let mut cursor = None;
+        let mut matches = Vec::new();
+        loop {
+            let rows = self.store.list_traffic(
+                TrafficFilter {
+                    query: (!query.is_empty()).then_some(query.clone()),
+                    method: method.clone(),
+                    status_group,
+                    host: None,
+                },
+                cursor.take(),
+                500,
+            )?;
+            if rows.is_empty() {
+                break;
+            }
+            cursor = rows.last().map(|row| row.id.clone());
+            matches.extend(rows.into_iter().filter(|row| {
+                domain.is_empty()
+                    || row.host.eq_ignore_ascii_case(&domain)
+                    || row.host.to_lowercase().ends_with(&format!(".{domain}"))
+            }));
+            if cursor.is_none() {
+                break;
+            }
+        }
+        let total = matches.len();
+        let results = matches
+            .into_iter()
+            .take(limit)
+            .map(|row| {
+                json!({
+                    "resourceId": row.id,
+                    "method": row.method,
+                    "url": redact_url_string(&row.url),
+                    "status": row.status,
+                    "durationMs": row.duration_ms,
+                    "startedAt": row.started_at,
+                })
+            })
+            .collect::<Vec<_>>();
+        Ok(json!({
+            "filter": {
+                "query": query,
+                "domain": domain,
+                "method": method,
+                "statusGroup": status_group,
+            },
+            "total": total,
+            "results": results,
+        }))
     }
 
     fn similar(&self, params: &Value) -> Result<Value, AppError> {
@@ -230,6 +314,7 @@ impl PrivateIpcService for NetcatPrivateIpcService {
                 let configured = (self.credential_loader)(Self::provider(params)?)?.is_some();
                 Ok(json!({ "configured": configured }))
             }
+            "netcat_search_exchanges" => self.search_exchanges(params),
             "netcat_get_exchange" => self.exchange(params),
             "netcat_parse_curl" => self
                 .requests
@@ -286,6 +371,10 @@ fn required_string<'a>(params: &'a Value, name: &str) -> Result<&'a str, AppErro
                 format!("缺少参数 {name}"),
             )
         })
+}
+
+fn optional_string<'a>(params: &'a Value, name: &str) -> Option<&'a str> {
+    params.get(name).and_then(Value::as_str)
 }
 
 fn serialization_error(error: serde_json::Error) -> AppError {
@@ -447,5 +536,74 @@ mod tests {
         assert!(diagnosis.get("evidence").unwrap().is_array());
         assert!(diagnosis.get("verificationSteps").unwrap().is_array());
         assert!(diagnosis.get("actions").unwrap().is_array());
+    }
+
+    #[test]
+    fn search_tool_matches_root_and_subdomains_without_exposing_ids_in_summaries() {
+        let store = Arc::new(Store::open_in_memory(10, 1_024).unwrap());
+        for (id, host, url, status) in [
+            (
+                "root",
+                "example.com",
+                "https://example.com/users?page=1",
+                200,
+            ),
+            (
+                "sub",
+                "api.example.com",
+                "https://api.example.com/users?token=secret",
+                401,
+            ),
+            (
+                "lookalike",
+                "notexample.com",
+                "https://notexample.com/users",
+                200,
+            ),
+        ] {
+            store
+                .insert_exchange(TrafficDraft {
+                    id: id.into(),
+                    started_at: "2026-11-25T10:00:00Z".into(),
+                    method: "GET".into(),
+                    url: url.into(),
+                    host: host.into(),
+                    status: Some(status),
+                    duration_ms: Some(15),
+                    request_headers: BTreeMap::new(),
+                    response_headers: BTreeMap::new(),
+                    request_body: Vec::new(),
+                    response_body: Vec::new(),
+                    content_type: None,
+                    mocked: false,
+                    origin: TrafficOrigin::Computer,
+                    device_token: None,
+                    device_name: None,
+                    source_exchange_id: None,
+                    matched_mock_rule_id: None,
+                    applied_script_ids: Vec::new(),
+                    network_profile_id: None,
+                    stage_timings: BTreeMap::new(),
+                    error: None,
+                })
+                .unwrap();
+        }
+        let service = NetcatPrivateIpcService::with_credential_loader(store, |_| Ok(None));
+
+        let result = service
+            .call(
+                "netcat_search_exchanges",
+                &json!({ "domain": "example.com", "query": "users", "limit": 1 }),
+            )
+            .unwrap();
+
+        assert_eq!(result["total"], 2);
+        assert_eq!(result["results"].as_array().unwrap().len(), 1);
+        assert!(result["results"][0]["resourceId"].is_string());
+        assert!(!result["results"][0]["url"]
+            .as_str()
+            .unwrap()
+            .contains("secret"));
+        assert_eq!(result["filter"]["domain"], "example.com");
     }
 }

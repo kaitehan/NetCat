@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { defineComponent, h } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 import { desktopApi, desktopApiKey, type DesktopApi } from './api/desktop'
@@ -70,6 +71,124 @@ function renderWithApi(api: DesktopApi) {
 }
 
 describe('App', () => {
+  it('opens the Mock page and prefills a new rule after assistant confirmation', async () => {
+    const api = windowsApi()
+    api.saveMockRule = vi.fn()
+    const mockDraft: MockRule = {
+      id: 'assistant-mock',
+      name: '429 限流响应',
+      enabled: false,
+      priority: 0,
+      methods: ['GET'],
+      matchKind: 'exact',
+      urlPattern: 'http://edge.microsoft.com/captiveportal/generate_204',
+      status: 429,
+      responseHeaders: { 'Content-Type': 'application/json' },
+      responseBody: '{"error":"throttled"}',
+      delayMs: 0,
+      createdAt: '2026-11-25T15:03:00Z'
+    }
+    const SupportChatPanelStub = defineComponent({
+      emits: ['prepareMockRule'],
+      setup(_, { emit }) {
+        return () => h('button', {
+          type: 'button',
+          onClick: () => emit('prepareMockRule', mockDraft)
+        }, '确认创建 Mock')
+      }
+    })
+
+    render(App, {
+      global: {
+        provide: { [desktopApiKey as symbol]: api },
+        stubs: { SupportChatPanel: SupportChatPanelStub }
+      }
+    })
+
+    await fireEvent.click(await screen.findByRole('button', { name: /打开智奈助手/ }))
+    await fireEvent.click(await screen.findByRole('button', { name: '确认创建 Mock' }))
+
+    expect(await screen.findByRole('heading', { name: 'Mock 规则' })).toBeVisible()
+    expect(await screen.findByRole('heading', { name: '新建 Mock' })).toBeVisible()
+    expect(screen.getByLabelText('规则名称')).toHaveValue('429 限流响应')
+    expect(screen.getByLabelText('请求方法')).toHaveValue('GET')
+    expect(screen.getByLabelText('URL 匹配')).toHaveValue('http://edge.microsoft.com/captiveportal/generate_204')
+    expect(screen.getByLabelText('状态码')).toHaveValue(429)
+    expect(screen.getByRole('textbox', { name: '响应正文' })).toHaveValue('{"error":"throttled"}')
+    expect(api.saveMockRule).not.toHaveBeenCalled()
+  })
+
+  it('applies assistant traffic filters and returns to the network request page', async () => {
+    const api = windowsApi()
+    vi.mocked(api.listTraffic).mockResolvedValue([row])
+    const SupportChatPanelStub = defineComponent({
+      emits: ['applyTrafficFilter'],
+      setup(_, { emit }) {
+        return () => h('button', {
+          type: 'button',
+          onClick: () => emit('applyTrafficFilter', {
+            query: 'users',
+            domain: 'example.com',
+            method: 'GET',
+            statusGroup: 4
+          })
+        }, '应用智奈筛选')
+      }
+    })
+
+    render(App, {
+      global: {
+        provide: { [desktopApiKey as symbol]: api },
+        stubs: { SupportChatPanel: SupportChatPanelStub }
+      }
+    })
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Mock 规则' }))
+    expect(await screen.findByRole('heading', { name: 'Mock 规则' })).toBeVisible()
+    await fireEvent.click(screen.getByRole('button', { name: /打开智奈助手/ }))
+    await fireEvent.click(await screen.findByRole('button', { name: '应用智奈筛选' }))
+
+    expect(screen.getByRole('searchbox', { name: '搜索网络请求' })).toHaveValue('users')
+    expect(screen.getByRole('button', { name: '请求方法：GET' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '状态码：4xx' })).toBeVisible()
+    expect(screen.getByRole('button', { name: '移除域名筛选' })).toHaveTextContent(
+      '域名：example.com（含子域名）'
+    )
+    expect(screen.queryByRole('button', { name: '应用智奈筛选' })).not.toBeInTheDocument()
+  })
+
+  it('keeps the source exchange as internal context when sending a request to the assistant', async () => {
+    const api = windowsApi()
+    vi.mocked(api.listTraffic).mockResolvedValue([row])
+    api.getTrafficDetail = vi.fn().mockResolvedValue(null)
+    api.buildExchangeCopy = vi.fn().mockResolvedValue('curl https://api.example.com/users')
+    const SupportChatPanelStub = defineComponent({
+      props: {
+        launchRequest: { type: Object, default: null }
+      },
+      setup(props) {
+        return () => h('output', { 'aria-label': '智奈启动请求' }, JSON.stringify(props.launchRequest))
+      }
+    })
+
+    render(App, {
+      global: {
+        provide: { [desktopApiKey as symbol]: api },
+        stubs: { SupportChatPanel: SupportChatPanelStub }
+      }
+    })
+
+    await fireEvent.click(await screen.findByRole('button', { name: '展开 api.example.com 分组' }))
+    const trafficRow = screen.getByRole('button', { name: /GET.*api\.example\.com\/users/ })
+    await fireEvent.contextMenu(trafficRow, { clientX: 80, clientY: 90 })
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '发送给智奈分析' }))
+
+    expect(api.buildExchangeCopy).toHaveBeenCalledWith('1', 'curl')
+    expect(await screen.findByRole('status', { name: '智奈启动请求' })).toHaveTextContent(
+      '"sourceExchangeId":"1"'
+    )
+  })
+
   it.each([
     ['getCaStatus', 'CA_KEY_MISMATCH'],
     ['getCaStatus', 'CA_KEY_UNAVAILABLE'],

@@ -1,7 +1,7 @@
 {
   "name": "netcat",
   "private": true,
-  "version": "0.6.5",
+  "version": "0.8.3",
   "author": "kaite han",
   "type": "module",
   "workspaces": [
@@ -29,6 +29,8 @@
     "@tauri-apps/api": "2.11.0",
     "@tauri-apps/plugin-clipboard-manager": "2.3.2",
     "@tauri-apps/plugin-dialog": "2.6.0",
+    "dompurify": "^3.5.0",
+    "marked": "^18.3.0",
     "monaco-editor": "^0.57.0",
     "qrcode.vue": "^3.11.0",
     "vue": "^3.5.44"

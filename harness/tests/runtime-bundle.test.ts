@@ -36,11 +36,11 @@ test('runtime dependency declaration exposes the bundled plugin to DSH resolutio
     dependencies: { existing: '1.0.0' }
   }))
 
-  await declareRuntimeDependency(manifestPath, '@netcat/dsh-plugin', '0.6.5')
+  await declareRuntimeDependency(manifestPath, '@netcat/dsh-plugin', '0.8.3')
 
   assert.deepEqual(JSON.parse(await readFile(manifestPath, 'utf8')).dependencies, {
     existing: '1.0.0',
-    '@netcat/dsh-plugin': '0.6.5'
+    '@netcat/dsh-plugin': '0.8.3'
   })
 })
 
@@ -53,7 +53,7 @@ test('runtime manifest hashes every bundled file in stable path order', async ()
   const manifest = await buildRuntimeManifest(root, {
     platform: 'darwin',
     arch: 'arm64',
-    bridgeVersion: '0.6.5'
+    bridgeVersion: '0.8.3'
   })
 
   assert.deepEqual(manifest.files.map(file => file.path), [
@@ -71,7 +71,7 @@ test('runtime verification rejects a file changed after manifest generation', as
   const manifest = await buildRuntimeManifest(root, {
     platform: 'win32',
     arch: 'x64',
-    bridgeVersion: '0.6.5'
+    bridgeVersion: '0.8.3'
   })
 
   await writeFile(join(root, 'node'), 'tampered')

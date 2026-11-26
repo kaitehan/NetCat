@@ -79,7 +79,7 @@ try {
   const manifest = await buildRuntimeManifest(output, {
     platform: process.platform,
     arch: process.arch,
-    bridgeVersion: '0.6.5'
+    bridgeVersion: '0.8.3'
   })
   await verifyRuntimeFiles(output, manifest)
   const bytes = (await Promise.all(manifest.files.map(async file => {

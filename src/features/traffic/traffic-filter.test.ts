@@ -39,7 +39,8 @@ describe('filterTraffic', () => {
       query: 'login',
       method: 'POST',
       status: '4xx',
-      host: 'auth.example.com'
+      host: 'auth.example.com',
+      domain: ''
     })).toEqual([rows[1]])
   })
 
@@ -48,7 +49,24 @@ describe('filterTraffic', () => {
       query: 'API.EXAMPLE',
       method: 'ALL',
       status: 'ALL',
-      host: ''
+      host: '',
+      domain: ''
     })).toEqual([rows[0]])
+  })
+
+  it('matches a root domain and its subdomains without matching lookalikes', () => {
+    const domainRows = [
+      ...rows,
+      { ...rows[0], id: '3', host: 'example.com', url: 'https://example.com/health' },
+      { ...rows[0], id: '4', host: 'notexample.com', url: 'https://notexample.com/users' }
+    ]
+
+    expect(filterTraffic(domainRows, {
+      query: '',
+      method: 'ALL',
+      status: 'ALL',
+      host: '',
+      domain: 'example.com'
+    }).map((row) => row.id)).toEqual(['1', '2', '3'])
   })
 })

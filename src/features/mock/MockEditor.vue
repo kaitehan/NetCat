@@ -5,9 +5,10 @@ import BodyEditor from '../../components/BodyEditor.vue'
 import { bodyEditorPolicy } from '../../components/body-editor-policy'
 import type { MatchKind, MockRule } from '../../shared/types'
 
-const { rule, initialFocus = null } = defineProps<{
+const { rule, initialFocus = null, creating = false } = defineProps<{
   rule: MockRule | null
   initialFocus?: 'headers' | 'body' | null
+  creating?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -159,7 +160,7 @@ function updateMatchKind(event: Event) {
   <form class="mock-editor" @submit.prevent="save">
     <header class="editor-header">
       <div>
-        <h2>{{ rule ? '编辑 Mock' : '新建 Mock' }}</h2>
+        <h2>{{ rule && !creating ? '编辑 Mock' : '新建 Mock' }}</h2>
         <p>匹配请求并直接返回本地响应</p>
       </div>
       <button type="button" class="icon-button" title="关闭" @click="emit('cancel')">

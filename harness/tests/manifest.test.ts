@@ -8,7 +8,7 @@ test('runtime manifest requires exact product and platform compatibility', () =>
     schemaVersion: 1,
     dshVersion: '0.2.3-alpha.2',
     nodeVersion: '24.22.3',
-    bridgeVersion: '0.6.5',
+    bridgeVersion: '0.8.3',
     platform: 'darwin',
     arch: 'arm64',
     files: [{ path: 'bridge/index.mjs', sha256: 'a'.repeat(64) }]

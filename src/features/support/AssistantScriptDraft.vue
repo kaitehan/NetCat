@@ -16,17 +16,18 @@ const script = computed(() => ({
   ...(draft.payload as unknown as ProxyScript),
   enabled: false
 }))
+const superseded = computed(() => draft.status === 'superseded')
 </script>
 
 <template>
   <section class="assistant-draft" aria-label="QuickJS 草稿">
     <header>
-      <span><Code2 :size="14" />QuickJS 草稿</span>
+      <span><Code2 :size="14" />{{ superseded ? 'QuickJS 草稿 · 已被后续操作替代' : 'QuickJS 草稿' }}</span>
       <strong>{{ script.name }}</strong>
     </header>
     <p>{{ script.methods.join(', ') }} · {{ script.urlPattern }}</p>
-    <pre>{{ script.source }}</pre>
-    <footer>
+    <pre v-if="!superseded">{{ script.source }}</pre>
+    <footer v-if="!superseded">
       <span>保存后保持停用，可在脚本页面检查并启用。</span>
       <button
         type="button"

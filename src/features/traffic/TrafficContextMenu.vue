@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, shallowRef, useTemplateRef, watch } from 'vue'
-import { ChevronRight, Copy, EyeOff, RefreshCw, Replace, TextQuote } from '@lucide/vue'
+import { BotMessageSquare, ChevronRight, Copy, EyeOff, RefreshCw, Replace, TextQuote } from '@lucide/vue'
 
 export type TrafficMenuAction =
+  | 'assistant:analyze'
   | 'copy:url'
   | 'copy:curl'
   | 'copy:powershell'
@@ -33,7 +34,7 @@ const emit = defineEmits<{
 const menu = useTemplateRef<HTMLElement>('menu')
 const activeSubmenu = shallowRef<'copy' | 'hide' | 'replay' | null>(null)
 const MENU_WIDTH = 194
-const MENU_HEIGHT = 230
+const MENU_HEIGHT = 266
 const SUBMENU_WIDTH = 218
 
 const menuStyle = computed(() => ({
@@ -133,6 +134,17 @@ onBeforeUnmount(() => {
       role="menu"
       aria-label="流量操作"
     >
+      <button
+        type="button"
+        role="menuitem"
+        :disabled="Boolean(disabledReasons['assistant:analyze'])"
+        :title="disabledReasons['assistant:analyze']"
+        @click="activate('assistant:analyze')"
+      >
+        <BotMessageSquare :size="14" />
+        <span>发送给智奈分析</span>
+      </button>
+      <div class="menu-separator" />
       <div class="menu-branch" @mouseenter="activeSubmenu = 'copy'">
         <button type="button" role="menuitem" data-submenu="copy" @click="activeSubmenu = 'copy'">
           <Copy :size="14" />

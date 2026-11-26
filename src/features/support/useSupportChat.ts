@@ -4,7 +4,6 @@ import type {
   AssistantConversation,
   AssistantInput,
   AssistantSnapshot,
-  MockRule,
   ProxyScript
 } from '../../shared/types'
 
@@ -17,10 +16,9 @@ export type AssistantSessionApi = Pick<DesktopApi,
   | 'submitAssistantInput'
   | 'authorizeAssistantNetworkRequest'
   | 'executeAssistantNetworkRequest'
-  | 'saveMockRule'
   | 'saveScript'
   | 'resolveAssistantDraft'
-> & Partial<Pick<DesktopApi, 'listen' | 'stopAssistant'>>
+> & Partial<Pick<DesktopApi, 'listen' | 'stopAssistant' | 'appendAssistantError'>>
 
 interface UseSupportChatOptions {
   api?: AssistantSessionApi
@@ -49,6 +47,21 @@ export function useSupportChat(options: UseSupportChatOptions = {}) {
   const activities = computed(() => snapshot.value?.activities ?? [])
   const drafts = computed(() => snapshot.value?.drafts ?? [])
 
+  async function reportError(cause: unknown) {
+    const message = normalizeDesktopError(cause).message
+    const conversationId = snapshot.value?.conversation.id
+    if (conversationId && api.appendAssistantError) {
+      try {
+        snapshot.value = await api.appendAssistantError(conversationId, message)
+        notice.value = null
+        return
+      } catch {
+        // Fall through to the temporary in-panel message.
+      }
+    }
+    notice.value = message
+  }
+
   async function load() {
     loading.value = true
     notice.value = null
@@ -68,7 +81,7 @@ export function useSupportChat(options: UseSupportChatOptions = {}) {
         })
       }
     } catch (cause) {
-      notice.value = normalizeDesktopError(cause).message
+      await reportError(cause)
     } finally {
       loading.value = false
     }
@@ -84,7 +97,7 @@ export function useSupportChat(options: UseSupportChatOptions = {}) {
         snapshot.value = await api.getAssistantSnapshot(snapshot.value.conversation.id)
       }
     } catch (cause) {
-      notice.value = normalizeDesktopError(cause).message
+      await reportError(cause)
     } finally {
       stopRequested = false
     }
@@ -104,7 +117,7 @@ export function useSupportChat(options: UseSupportChatOptions = {}) {
     try {
       snapshot.value = await api.getAssistantSnapshot(id)
     } catch (cause) {
-      notice.value = normalizeDesktopError(cause).message
+      await reportError(cause)
     } finally {
       loading.value = false
     }
@@ -131,7 +144,7 @@ export function useSupportChat(options: UseSupportChatOptions = {}) {
       return true
     } catch (cause) {
       if (!stopRequested && stoppedConversationId !== submittedConversationId) {
-        notice.value = normalizeDesktopError(cause).message
+        await reportError(cause)
       }
       return false
     } finally {
@@ -161,11 +174,27 @@ export function useSupportChat(options: UseSupportChatOptions = {}) {
       ))
       return true
     } catch (cause) {
-      notice.value = normalizeDesktopError(cause).message
+      await reportError(cause)
       return false
     } finally {
       submitting.value = false
     }
+  }
+
+  async function applyTrafficSearchDraft(draftId: string): Promise<boolean> {
+    const conversationId = snapshot.value?.conversation.id
+    if (!conversationId || submitting.value) return false
+    try {
+      snapshot.value = await api.resolveAssistantDraft(conversationId, draftId, 'accepted')
+      return true
+    } catch (cause) {
+      await reportError(cause)
+      return false
+    }
+  }
+
+  async function prepareMockDraft(draftId: string): Promise<boolean> {
+    return applyTrafficSearchDraft(draftId)
   }
 
   async function acceptDraft(
@@ -181,15 +210,11 @@ export function useSupportChat(options: UseSupportChatOptions = {}) {
       snapshot.value = await api.resolveAssistantDraft(conversationId, draftId, 'accepted')
       return true
     } catch (cause) {
-      notice.value = normalizeDesktopError(cause).message
+      await reportError(cause)
       return false
     } finally {
       submitting.value = false
     }
-  }
-
-  function acceptMockDraft(draftId: string, rule: MockRule) {
-    return acceptDraft(draftId, () => api.saveMockRule({ ...rule, enabled: false }))
   }
 
   function acceptScriptDraft(draftId: string, script: ProxyScript) {
@@ -210,7 +235,7 @@ export function useSupportChat(options: UseSupportChatOptions = {}) {
       }
       return true
     } catch (cause) {
-      notice.value = normalizeDesktopError(cause).message
+      await reportError(cause)
       return false
     }
   }
@@ -222,7 +247,7 @@ export function useSupportChat(options: UseSupportChatOptions = {}) {
       conversationList.value = conversationList.value.filter((conversation) => conversation.id !== id)
       if (snapshot.value?.conversation.id === id) snapshot.value = null
     } catch (cause) {
-      notice.value = normalizeDesktopError(cause).message
+      await reportError(cause)
     }
   }
 
@@ -252,8 +277,9 @@ export function useSupportChat(options: UseSupportChatOptions = {}) {
     sendInput,
     sendMessage,
     executeNetworkDraft,
+    applyTrafficSearchDraft,
+    prepareMockDraft,
     stop,
-    acceptMockDraft,
     acceptScriptDraft,
     renameConversation,
     deleteConversation,

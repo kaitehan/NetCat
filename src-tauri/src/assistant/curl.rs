@@ -30,7 +30,7 @@ pub struct CurlRequest {
     pub sensitive_fields: Vec<String>,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ExecutableCurlRequest {
     pub method: String,
     pub url: Url,
@@ -41,10 +41,11 @@ pub struct ExecutableCurlRequest {
     pub timeout_seconds: Option<u64>,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct CurlOperation {
     pub raw: ExecutableCurlRequest,
     pub projection: CurlRequest,
+    pub description: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +71,7 @@ pub fn parse_curl_operation(input: &str) -> Result<CurlOperation, CurlParseError
     let mut follow_redirects = false;
     let mut tls_verification = true;
     let mut timeout_seconds = None;
+    let mut description = String::new();
     let mut index = 1;
     while index < tokens.len() {
         let token = &tokens[index];
@@ -84,9 +86,14 @@ pub fn parse_curl_operation(input: &str) -> Result<CurlOperation, CurlParseError
                 };
                 headers.insert(name.trim().into(), value.trim().into());
             }
-            "-d" | "--data" | "--data-raw" | "--data-binary" => {
+            "-d" | "--data" | "--data-raw" | "--data-binary" | "--data-urlencode" => {
                 data = Some(next_value(&tokens, &mut index, token)?);
             }
+            "--url" => url = Some(next_value(&tokens, &mut index, token)?),
+            "-b" | "--cookie" => {
+                headers.insert("Cookie".into(), next_value(&tokens, &mut index, token)?);
+            }
+            "--compressed" | "--http1.1" | "--http2" => {}
             "-L" | "--location" => follow_redirects = true,
             "-k" | "--insecure" => tls_verification = false,
             "--max-time" => {
@@ -102,6 +109,10 @@ pub fn parse_curl_operation(input: &str) -> Result<CurlOperation, CurlParseError
             }
             value if value.starts_with('-') => {
                 return Err(parse_error(index, format!("暂不支持参数 {value}")));
+            }
+            _ if url.is_some() => {
+                description = tokens[index..].join(" ");
+                break;
             }
             value => return Err(parse_error(index, format!("无法识别参数 {value}"))),
         }
@@ -180,6 +191,7 @@ pub fn parse_curl_operation(input: &str) -> Result<CurlOperation, CurlParseError
             timeout_seconds,
             sensitive_fields,
         },
+        description,
     })
 }
 
@@ -308,5 +320,44 @@ mod tests {
         assert!(!projection.contains("hunter2"));
         assert!(!projection.contains("query-secret"));
         assert!(projection.contains("query.access_token"));
+    }
+
+    #[test]
+    fn parses_chrome_curl_options_cookie_and_trailing_description() {
+        let operation = parse_curl_operation(concat!(
+            "curl --url 'https://api.example.com/login' \\\n",
+            "  -H 'accept: application/json' \\\n",
+            "  -b 'session=raw-secret; theme=light' \\\n",
+            "  --data-raw '{\"name\":\"Ada\"}' --compressed --http2 ",
+            "请分析为什么登录失败"
+        ))
+        .unwrap();
+
+        assert_eq!(operation.raw.method, "POST");
+        assert_eq!(
+            operation.raw.headers["Cookie"],
+            "session=raw-secret; theme=light"
+        );
+        assert_eq!(operation.description, "请分析为什么登录失败");
+        assert_eq!(operation.projection.headers["Cookie"], "[REDACTED]");
+    }
+
+    #[test]
+    fn treats_text_on_the_next_line_as_description() {
+        let operation = parse_curl_operation(
+            "curl 'https://api.example.com/users' --http1.1\n帮我检查这个接口",
+        )
+        .unwrap();
+
+        assert_eq!(operation.description, "帮我检查这个接口");
+    }
+
+    #[test]
+    fn still_rejects_unknown_options_instead_of_treating_them_as_description() {
+        let error =
+            parse_curl_operation("curl 'https://api.example.com/users' --unknown-option 帮我分析")
+                .unwrap_err();
+
+        assert!(error.message.contains("--unknown-option"));
     }
 }

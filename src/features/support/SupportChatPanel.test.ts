@@ -65,6 +65,16 @@ function assistantApi() {
         ? { ...draft, status: 'accepted' }
         : draft)
     })),
+    appendAssistantError: vi.fn().mockImplementation(async (id: string, content: string) => ({
+      ...snapshots.get(id)!,
+      messages: [...snapshots.get(id)!.messages, {
+        id: 'error-message',
+        role: 'system',
+        content,
+        createdAt: '2026-11-24T12:00:00Z',
+        messageType: 'error'
+      }]
+    })),
     submitAssistantInput: vi.fn().mockImplementation(async (id: string, input: { message: string }) => ({
       ...snapshots.get(id)!,
       messages: [{
@@ -109,6 +119,46 @@ describe('SupportChatPanel', () => {
     await waitFor(() => expect(input).toHaveValue(''))
     expect(api.submitAssistantInput).toHaveBeenCalledWith('first', { kind: 'message', message: '第一行' })
     expect(screen.getByRole('log', { name: 'HTTPS 抓包问题的消息' })).toHaveTextContent('第一行')
+  })
+
+  it('clears the composer as soon as submission starts', async () => {
+    const api = assistantApi()
+    api.submitAssistantInput.mockImplementation(() => new Promise(() => {}))
+    render(SupportChatPanel, { props: { api } })
+    const input = await screen.findByRole('textbox', { name: '输入消息' })
+
+    await fireEvent.update(input, '立即清空')
+    await fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(input).toHaveValue('')
+  })
+
+  it('renders assistant markdown, avatar, timestamps, and persistent error messages', async () => {
+    const api = assistantApi()
+    api.getAssistantSnapshot.mockResolvedValue({
+      ...snapshot(conversations[0]!),
+      messages: [
+        {
+          id: 'assistant-message',
+          role: 'assistant',
+          content: '## 分析结果\n\n- 接口返回 401',
+          createdAt: '2026-11-24T11:00:00Z'
+        },
+        {
+          id: 'system-error',
+          role: 'system',
+          content: '无法解析 cURL',
+          createdAt: '2026-11-24T11:01:00Z',
+          messageType: 'error'
+        }
+      ]
+    })
+    render(SupportChatPanel, { props: { api } })
+
+    expect(await screen.findByRole('heading', { name: '分析结果' })).toBeVisible()
+    expect(screen.getByRole('img', { name: '智奈' })).toBeVisible()
+    expect(screen.getByText('无法解析 cURL').closest('article')).toHaveAttribute('data-message-type', 'error')
+    expect(screen.getAllByText(/\d{2}-\d{2} \d{2}:\d{2}/)).toHaveLength(2)
   })
 
   it('renames and hides a conversation through visible controls', async () => {
@@ -183,56 +233,174 @@ describe('SupportChatPanel', () => {
     expect(api.executeAssistantNetworkRequest).toHaveBeenCalledWith('first', 'single-use-handle')
   })
 
-  it('saves validated Mock and QuickJS drafts disabled after explicit confirmation', async () => {
+  it('opens a generated Mock draft for review without saving it immediately', async () => {
     const api = assistantApi()
     api.getAssistantSnapshot.mockResolvedValue({
       ...snapshot(conversations[0]!),
+      drafts: [{
+        id: 'mock-draft',
+        kind: 'mock',
+        status: 'pending',
+        payload: {
+          id: 'mock-1',
+          name: '登录失败',
+          enabled: false,
+          priority: 0,
+          methods: ['POST'],
+          matchKind: 'exact',
+          urlPattern: 'https://api.example.com/login',
+          status: 401,
+          responseHeaders: {},
+          responseBody: '{"error":"unauthorized"}',
+          delayMs: 0,
+          createdAt: '2026-11-24T12:00:00Z'
+        }
+      }]
+    })
+    const view = render(SupportChatPanel, { props: { api } })
+
+    await fireEvent.click(await screen.findByRole('button', { name: '按以上信息创建 Mock 规则' }))
+    expect(api.saveMockRule).not.toHaveBeenCalled()
+    expect(api.resolveAssistantDraft).toHaveBeenCalledWith('first', 'mock-draft', 'accepted')
+    await waitFor(() => {
+      const events = (view.emitted().prepareMockRule
+        ?? view.emitted()['prepare-mock-rule']) as unknown[][] | undefined
+      expect(events?.[0]?.[0]).toMatchObject({
+        id: 'mock-1',
+        name: '登录失败',
+        enabled: false,
+        methods: ['POST'],
+        status: 401,
+        responseBody: '{"error":"unauthorized"}'
+      })
+    })
+  })
+
+  it('saves a validated QuickJS draft disabled after explicit confirmation', async () => {
+    const api = assistantApi()
+    api.getAssistantSnapshot.mockResolvedValue({
+      ...snapshot(conversations[0]!),
+      drafts: [{
+        id: 'script-draft',
+        kind: 'script',
+        status: 'pending',
+        payload: {
+          id: 'script-1',
+          name: '添加诊断头',
+          enabled: false,
+          priority: 0,
+          methods: ['POST'],
+          matchKind: 'exact',
+          urlPattern: 'https://api.example.com/login',
+          source: 'function onRequest(request) { return request; }',
+          createdAt: '2026-11-24T12:00:00Z'
+        }
+      }]
+    })
+    render(SupportChatPanel, { props: { api } })
+
+    await fireEvent.click(await screen.findByRole('button', { name: '保存 QuickJS 草稿' }))
+    expect(api.saveScript).toHaveBeenCalledWith(expect.objectContaining({ id: 'script-1', enabled: false }))
+    expect(api.resolveAssistantDraft).toHaveBeenCalledWith('first', 'script-draft', 'accepted')
+  })
+
+  it('renders action drafts directly after the assistant message that produced them', async () => {
+    const api = assistantApi()
+    api.getAssistantSnapshot.mockResolvedValue({
+      ...snapshot(conversations[0]!),
+      messages: [
+        {
+          id: 'assistant-first',
+          role: 'assistant',
+          content: '第一轮筛选完成',
+          createdAt: '2026-11-25T10:00:00Z'
+        },
+        {
+          id: 'user-second',
+          role: 'user',
+          content: '继续排查',
+          createdAt: '2026-11-25T10:01:00Z'
+        }
+      ],
+      drafts: [{
+        id: 'search-first',
+        kind: 'trafficSearch',
+        status: 'pending',
+        messageId: 'assistant-first',
+        createdAt: '2026-11-25T10:00:00Z',
+        payload: {
+          filter: { query: 'users', domain: '', method: null, statusGroup: null },
+          total: 0,
+          summaries: []
+        }
+      }]
+    })
+    render(SupportChatPanel, { props: { api } })
+
+    const assistantMessage = await screen.findByText('第一轮筛选完成')
+    const actionCard = screen.getByRole('region', { name: '抓包搜索结果' })
+    const nextMessage = screen.getByText('继续排查')
+    expect(assistantMessage.compareDocumentPosition(actionCard) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(actionCard.compareDocumentPosition(nextMessage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('compacts superseded drafts and leaves only the latest same-kind action available', async () => {
+    const api = assistantApi()
+    api.getAssistantSnapshot.mockResolvedValue({
+      ...snapshot(conversations[0]!),
+      messages: [
+        {
+          id: 'assistant-first',
+          role: 'assistant',
+          content: '第一轮筛选',
+          createdAt: '2026-11-25T10:00:00Z'
+        },
+        {
+          id: 'assistant-second',
+          role: 'assistant',
+          content: '第二轮筛选',
+          createdAt: '2026-11-25T10:01:00Z'
+        }
+      ],
       drafts: [
         {
-          id: 'mock-draft',
-          kind: 'mock',
-          status: 'pending',
+          id: 'search-first',
+          kind: 'trafficSearch',
+          status: 'superseded',
+          messageId: 'assistant-first',
+          createdAt: '2026-11-25T10:00:00Z',
           payload: {
-            id: 'mock-1',
-            name: '登录失败',
-            enabled: false,
-            priority: 0,
-            methods: ['POST'],
-            matchKind: 'exact',
-            urlPattern: 'https://api.example.com/login',
-            status: 401,
-            responseHeaders: {},
-            responseBody: '{"error":"unauthorized"}',
-            delayMs: 0,
-            createdAt: '2026-11-24T12:00:00Z'
+            filter: { query: 'users', domain: '', method: null, statusGroup: null },
+            total: 4,
+            summaries: [{
+              method: 'GET',
+              url: 'https://api.example.com/users',
+              status: 200,
+              durationMs: 12,
+              startedAt: '2026-11-25T09:59:00Z'
+            }]
           }
         },
         {
-          id: 'script-draft',
-          kind: 'script',
+          id: 'search-second',
+          kind: 'trafficSearch',
           status: 'pending',
+          messageId: 'assistant-second',
+          createdAt: '2026-11-25T10:01:00Z',
           payload: {
-            id: 'script-1',
-            name: '添加诊断头',
-            enabled: false,
-            priority: 0,
-            methods: ['POST'],
-            matchKind: 'exact',
-            urlPattern: 'https://api.example.com/login',
-            source: 'function onRequest(request) { return request; }',
-            createdAt: '2026-11-24T12:00:00Z'
+            filter: { query: 'orders', domain: '', method: null, statusGroup: null },
+            total: 2,
+            summaries: []
           }
         }
       ]
     })
     render(SupportChatPanel, { props: { api } })
 
-    await fireEvent.click(await screen.findByRole('button', { name: '保存 Mock 草稿' }))
-    expect(api.saveMockRule).toHaveBeenCalledWith(expect.objectContaining({ id: 'mock-1', enabled: false }))
-    expect(api.resolveAssistantDraft).toHaveBeenCalledWith('first', 'mock-draft', 'accepted')
-
-    await fireEvent.click(screen.getByRole('button', { name: '保存 QuickJS 草稿' }))
-    expect(api.saveScript).toHaveBeenCalledWith(expect.objectContaining({ id: 'script-1', enabled: false }))
-    expect(api.resolveAssistantDraft).toHaveBeenCalledWith('first', 'script-draft', 'accepted')
+    expect(await screen.findByText('已被后续操作替代')).toBeVisible()
+    expect(screen.queryByText('https://api.example.com/users')).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '在网络请求中查看' })).toHaveLength(1)
+    expect(screen.getByText('关键词：users')).toBeVisible()
+    expect(screen.getByText('关键词：orders')).toBeVisible()
   })
 })

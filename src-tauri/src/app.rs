@@ -11,7 +11,7 @@ use crate::{
         models::{AssistantConversation, AssistantInput, AssistantSnapshot},
         native_runtime::{BridgeEvent, BridgeEventSink, NativeBridgeConfig, NativeBridgeRuntime},
         network::{NetworkRequestPreview, PendingRequestManager},
-        service::AssistantService,
+        service::{network_diagnostic_model_input, AssistantService},
         settings::{AssistantSettings, AssistantSettingsService},
         supervisor::{AssistantSupervisor, OperationGate, OperationIdentity},
         tool_service::NetcatPrivateIpcService,
@@ -915,6 +915,15 @@ fn hide_assistant_conversation(
 }
 
 #[tauri::command]
+fn append_assistant_error(
+    conversation_id: String,
+    content: String,
+    state: State<'_, AppState>,
+) -> Result<AssistantSnapshot, AppError> {
+    AssistantService::new(Arc::clone(&state.store)).append_error(&conversation_id, &content)
+}
+
+#[tauri::command]
 async fn submit_assistant_input(
     conversation_id: String,
     input: AssistantInput,
@@ -922,26 +931,15 @@ async fn submit_assistant_input(
 ) -> Result<AssistantSnapshot, AppError> {
     let service = AssistantService::new(Arc::clone(&state.store));
     let curl_operation = match &input {
-        AssistantInput::Curl { curl } => Some(parse_curl_operation(curl).map_err(|error| {
+        AssistantInput::Curl { curl, .. } => Some(parse_curl_operation(curl).map_err(|error| {
             AppError::new("ASSISTANT_CURL_INVALID", "无法解析 cURL")
                 .with_detail(format!("位置 {}: {}", error.position, error.message))
         })?),
         _ => None,
     };
-    let model_input = service.model_input(&input)?;
+    let model_input = service.model_input(&conversation_id, &input)?;
+    let fallback_input = input.clone();
     let snapshot = service.submit(&conversation_id, input)?;
-    if let Some(operation) = curl_operation {
-        let preview = state
-            .assistant_requests
-            .remember(&conversation_id, operation);
-        return service.add_network_draft(
-            &conversation_id,
-            serde_json::to_value(preview).map_err(|error| {
-                AppError::new("SERIALIZE_ERROR", "无法生成联网诊断预览")
-                    .with_detail(error.to_string())
-            })?,
-        );
-    }
     let Some(model_input) = model_input else {
         return Ok(snapshot);
     };
@@ -951,7 +949,29 @@ async fn submit_assistant_input(
         snapshot.conversation.session_id.clone(),
         uuid::Uuid::new_v4().to_string(),
     );
-    let assistant = Arc::clone(&state.assistant);
+    let response =
+        run_assistant_model(Arc::clone(&state.assistant), operation, model_input).await?;
+    let completed =
+        service.complete_with_action_fallback(&conversation_id, &response, &fallback_input)?;
+    let Some(curl_operation) = curl_operation else {
+        return Ok(completed);
+    };
+    let preview = state
+        .assistant_requests
+        .remember(&conversation_id, curl_operation);
+    service.add_network_draft(
+        &conversation_id,
+        serde_json::to_value(preview).map_err(|error| {
+            AppError::new("SERIALIZE_ERROR", "无法生成联网诊断预览").with_detail(error.to_string())
+        })?,
+    )
+}
+
+async fn run_assistant_model(
+    assistant: Arc<AssistantSupervisor<NativeBridgeRuntime>>,
+    operation: OperationIdentity,
+    model_input: String,
+) -> Result<String, AppError> {
     let runtime_assistant = Arc::clone(&assistant);
     let runtime_operation = operation.clone();
     let response = tauri::async_runtime::spawn_blocking(move || {
@@ -965,7 +985,7 @@ async fn submit_assistant_input(
     if !assistant.claim_completion(&operation) {
         return Err(AppError::new("ASSISTANT_STOPPED", "智奈分析已停止"));
     }
-    service.complete(&conversation_id, &response)
+    Ok(response)
 }
 
 #[tauri::command]
@@ -1001,17 +1021,27 @@ async fn execute_assistant_network_request(
     request_handle: String,
     state: State<'_, AppState>,
 ) -> Result<AssistantSnapshot, AppError> {
+    let request = state.assistant_requests.projection(&conversation_id)?;
     let response = state
         .assistant_requests
         .execute(&conversation_id, &request_handle)
         .await?;
-    let content = serde_json::to_string_pretty(&response).map_err(|error| {
-        AppError::new("SERIALIZE_ERROR", "无法生成联网诊断结果").with_detail(error.to_string())
-    })?;
-    AssistantService::new(Arc::clone(&state.store)).complete_network_request(
+    let service = AssistantService::new(Arc::clone(&state.store));
+    let snapshot = service.snapshot(&conversation_id)?;
+    let operation = OperationIdentity::new(
+        uuid::Uuid::new_v4().to_string(),
+        conversation_id.clone(),
+        snapshot.conversation.session_id,
+        uuid::Uuid::new_v4().to_string(),
+    );
+    let model_input = service.contextualize_model_input(
         &conversation_id,
-        &format!("联网诊断已完成。响应内容按不可信数据处理：\n{content}"),
-    )
+        network_diagnostic_model_input(&request, &response)?,
+    )?;
+    service.mark_model_context_visible(&conversation_id)?;
+    let analysis =
+        run_assistant_model(Arc::clone(&state.assistant), operation, model_input).await?;
+    service.complete_network_request(&conversation_id, &analysis)
 }
 
 #[tauri::command]
@@ -1367,6 +1397,7 @@ pub fn run() {
             get_assistant_snapshot,
             rename_assistant_conversation,
             hide_assistant_conversation,
+            append_assistant_error,
             submit_assistant_input,
             stop_assistant,
             get_assistant_network_preview,

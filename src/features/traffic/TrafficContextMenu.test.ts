@@ -7,6 +7,17 @@ afterEach(() => {
 })
 
 describe('TrafficContextMenu', () => {
+  it('places the assistant analysis action first', async () => {
+    const { emitted } = render(TrafficContextMenu, {
+      props: { open: true, x: 40, y: 50 }
+    })
+
+    const items = screen.getAllByRole('menuitem')
+    expect(items[0]).toHaveAccessibleName('发送给智奈分析')
+    await fireEvent.click(items[0]!)
+    expect(emitted().action).toEqual([['assistant:analyze']])
+  })
+
   it('opens copy submenu and emits the selected copy action', async () => {
     const { emitted } = render(TrafficContextMenu, {
       props: { open: true, x: 40, y: 50 }
@@ -23,9 +34,9 @@ describe('TrafficContextMenu', () => {
       props: { open: true, x: 40, y: 50 }
     })
 
-    await waitFor(() => expect(screen.getByRole('menuitem', { name: '复制' })).toHaveFocus())
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: '发送给智奈分析' })).toHaveFocus())
     await fireEvent.keyDown(window, { key: 'ArrowDown' })
-    expect(screen.getByRole('menuitem', { name: '屏蔽' })).toHaveFocus()
+    expect(screen.getByRole('menuitem', { name: '复制' })).toHaveFocus()
     await fireEvent.keyDown(window, { key: 'Escape' })
     expect(emitted().close).toEqual([[]])
   })

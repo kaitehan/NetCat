@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, reactive, shallowRef } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, reactive, shallowRef } from 'vue'
 import { Search, X } from '@lucide/vue'
 import AppSidebar from './components/AppSidebar.vue'
 import FilterSelect from './components/FilterSelect.vue'
@@ -15,6 +15,7 @@ import { filterTrafficByDevice, listTrafficDevices, type DeviceScope } from './f
 import { filterTraffic } from './features/traffic/traffic-filter'
 import { useNetCat } from './composables/useNetCat'
 import type {
+  AssistantInput,
   DiagnosticTrafficDetail,
   MockRule,
   MockRuleTestResult,
@@ -44,6 +45,7 @@ const replayEditorOpen = shallowRef(false)
 const replayDraft = shallowRef<ReplayDraft | null>(null)
 const replayMode = shallowRef<ReplayMode>('upstream')
 const editingRule = shallowRef<MockRule | null>(null)
+const mockEditorCreating = shallowRef(false)
 const mockInitialFocus = shallowRef<'headers' | 'body' | null>(null)
 const mockTestResult = shallowRef<MockRuleTestResult | null>(null)
 const toast = shallowRef<string | null>(null)
@@ -56,7 +58,8 @@ const contextDetail = shallowRef<TrafficDetail | null>(null)
 const contextPosition = reactive({ x: 0, y: 0 })
 const diagnosticsOpen = shallowRef(false)
 const supportOpen = shallowRef(false)
-const supportExchangeId = shallowRef<string | null>(null)
+const supportLaunchRequest = shallowRef<{ sequence: number; input: AssistantInput } | null>(null)
+let supportLaunchSequence = 0
 const networkEditorOpen = shallowRef(false)
 const diagnosticDetail = shallowRef<DiagnosticTrafficDetail | null>(null)
 const diagnosticDetailLoading = shallowRef(false)
@@ -65,7 +68,8 @@ const filter = reactive<TrafficFilter>({
   query: '',
   method: 'ALL',
   status: 'ALL',
-  host: ''
+  host: '',
+  domain: ''
 })
 const methodOptions = [
   { value: 'ALL', label: '全部方法' },
@@ -140,10 +144,16 @@ const contextDisabledReasons = computed<Partial<Record<TrafficMenuAction, string
     reasons['mock:headers'] = mockReason
     reasons['mock:body'] = mockReason
   }
-  if (detail?.requestBody.length && detail.requestBodyText === null) {
+  const requestCopyReason = detail && detail.requestBody.length !== detail.requestOriginalBytes
+    ? '请求正文已截断，不能生成请求命令'
+    : detail?.requestBody.length && detail.requestBodyText === null
+      ? '二进制请求正文不能生成请求命令'
+      : null
+  if (requestCopyReason) {
     for (const kind of ['curl', 'powershell', 'fetchBrowser', 'fetchNode'] as const) {
-      reasons[`copy:${kind}`] = '二进制请求正文不能生成请求命令'
+      reasons[`copy:${kind}`] = requestCopyReason
     }
+    reasons['assistant:analyze'] = requestCopyReason.replace('生成请求命令', '发送给智奈分析')
   }
   if (detail?.responseBody.length && detail.responseBodyText === null) {
     reasons['copy:responseBody'] = '二进制响应正文不能复制为文本'
@@ -168,12 +178,23 @@ async function deleteDeviceData(deviceToken: string) {
   if (deviceScope.value === `device:${deviceToken}`) deviceScope.value = 'all'
 }
 
-function openMockEditor(rule: MockRule | null, initialFocus: 'headers' | 'body' | null = null) {
+function openMockEditor(
+  rule: MockRule | null,
+  initialFocus: 'headers' | 'body' | null = null,
+  creating = rule === null
+) {
   editingRule.value = rule
+  mockEditorCreating.value = creating
   mockInitialFocus.value = initialFocus
   mockEditorOpen.value = true
   toast.value = null
   lastHidden.value = null
+}
+
+function prepareAssistantMockRule(rule: MockRule) {
+  activeView.value = 'mocks'
+  openMockEditor({ ...rule, enabled: false }, null, true)
+  closeSupport()
 }
 
 async function openTrafficMenu(payload: { row: TrafficSummary; x: number; y: number }) {
@@ -263,7 +284,10 @@ async function handleTrafficAction(action: TrafficMenuAction) {
   if (!row) {
     return
   }
-  if (action.startsWith('copy:')) {
+  if (action === 'assistant:analyze') {
+    const curl = await capture.api.buildExchangeCopy(row.id, 'curl')
+    launchSupport({ kind: 'curl', curl, sourceExchangeId: row.id })
+  } else if (action.startsWith('copy:')) {
     const copied = await capture.copyExchange(row.id, action.slice(5) as TrafficCopyKind)
     if (copied) {
       toast.value = '内容已复制到剪贴板'
@@ -331,18 +355,42 @@ async function copyCurl(id: string) {
 }
 
 function openSupport() {
-  supportExchangeId.value = null
   supportOpen.value = true
 }
 
 function analyzeExchange(id: string) {
-  supportExchangeId.value = id
+  launchSupport({ kind: 'exchange', exchangeId: id })
+}
+
+function launchSupport(input: AssistantInput) {
+  supportLaunchSequence += 1
+  supportLaunchRequest.value = { sequence: supportLaunchSequence, input }
   supportOpen.value = true
 }
 
 function closeSupport() {
   supportOpen.value = false
-  supportExchangeId.value = null
+  supportLaunchRequest.value = null
+}
+
+function applyAssistantTrafficFilter(value: {
+  query: string
+  domain: string
+  method: string | null
+  statusGroup: number | null
+}) {
+  activeView.value = 'traffic'
+  deviceScope.value = 'all'
+  showHidden.value = true
+  filter.query = value.query
+  filter.domain = value.domain
+  filter.method = value.method ?? 'ALL'
+  filter.status = value.statusGroup ? `${value.statusGroup}xx` : 'ALL'
+  filter.host = ''
+  closeSupport()
+  void nextTick(() => {
+    document.querySelector<HTMLButtonElement>('.traffic-table button')?.focus()
+  })
 }
 
 async function exportCa() {
@@ -418,6 +466,16 @@ onMounted(() => void capture.initialize())
             <FilterSelect v-model="filter.method" label="请求方法" :options="methodOptions" />
             <FilterSelect v-model="filter.status" label="状态码" :options="statusOptions" />
             <FilterSelect v-model="filter.host" label="域名" :options="hostOptions" wide />
+            <button
+              v-if="filter.domain"
+              type="button"
+              class="domain-filter-tag"
+              aria-label="移除域名筛选"
+              @click="filter.domain = ''"
+            >
+              域名：{{ filter.domain }}（含子域名）
+              <X :size="12" />
+            </button>
             <button
               v-if="hiddenRuleCount"
               type="button"
@@ -529,7 +587,13 @@ onMounted(() => void capture.initialize())
     </footer>
 
     <div v-if="mockEditorOpen" class="drawer-backdrop" @click.self="mockEditorOpen = false">
-      <MockEditor :rule="editingRule" :initial-focus="mockInitialFocus" @save="saveMock" @cancel="mockEditorOpen = false" />
+      <MockEditor
+        :rule="editingRule"
+        :initial-focus="mockInitialFocus"
+        :creating="mockEditorCreating"
+        @save="saveMock"
+        @cancel="mockEditorOpen = false"
+      />
     </div>
 
     <div v-if="replayEditorOpen && replayDraft" class="drawer-backdrop" @click.self="replayEditorOpen = false">
@@ -588,8 +652,10 @@ onMounted(() => void capture.initialize())
     <SupportChatPanel
       v-else
       id="support-chat-panel"
-      :initial-exchange-id="supportExchangeId"
+      :launch-request="supportLaunchRequest"
       @close="closeSupport"
+      @apply-traffic-filter="applyAssistantTrafficFilter"
+      @prepare-mock-rule="prepareAssistantMockRule"
     />
   </div>
 </template>
@@ -709,6 +775,29 @@ onMounted(() => void capture.initialize())
   font-size: var(--font-size-2xs);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.domain-filter-tag {
+  display: inline-flex;
+  min-width: 0;
+  height: 29px;
+  padding: 0 8px;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-control);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.domain-filter-tag:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .hidden-control,

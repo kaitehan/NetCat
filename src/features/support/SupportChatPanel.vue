@@ -1,18 +1,29 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, shallowRef, useTemplateRef } from 'vue'
+import { computed, nextTick, onMounted, shallowRef, useTemplateRef, watch } from 'vue'
 import { CircleStop, History, LoaderCircle, Pencil, Plus, Send, Trash2, X } from '@lucide/vue'
 import AssistantNetworkDraft from './AssistantNetworkDraft.vue'
+import AssistantMarkdown from './AssistantMarkdown.vue'
 import AssistantMockDraft from './AssistantMockDraft.vue'
 import AssistantScriptDraft from './AssistantScriptDraft.vue'
+import AssistantTrafficSearchDraft from './AssistantTrafficSearchDraft.vue'
 import { useSupportChat, type AssistantSessionApi } from './useSupportChat'
+import type { AssistantDraft, AssistantInput, MockRule } from '../../shared/types'
 
-const { api, initialExchangeId } = defineProps<{
+interface AssistantLaunchRequest {
+  sequence: number
+  input: AssistantInput
+}
+
+const { api, initialExchangeId, launchRequest } = defineProps<{
   api?: AssistantSessionApi
   initialExchangeId?: string | null
+  launchRequest?: AssistantLaunchRequest | null
 }>()
 
 const emit = defineEmits<{
   close: []
+  applyTrafficFilter: [filter: { query: string; domain: string; method: string | null; statusGroup: number | null }]
+  prepareMockRule: [rule: MockRule]
 }>()
 
 const chat = useSupportChat({ api })
@@ -22,10 +33,22 @@ const editingTitle = shallowRef('')
 const composing = shallowRef(false)
 const inputRef = useTemplateRef<HTMLTextAreaElement>('messageInput')
 const messageListRef = useTemplateRef<HTMLElement>('messageList')
+let handledLaunchSequence = 0
 
 const conversationTitle = computed(() => chat.activeConversation.value?.title ?? '新对话')
 const messageLogLabel = computed(() => `${conversationTitle.value}的消息`)
 const canSend = computed(() => draft.value.trim().length > 0 && !chat.submitting.value)
+const draftsByMessage = computed(() => {
+  const grouped = new Map<string, AssistantDraft[]>()
+  for (const item of chat.drafts.value) {
+    if (!item.messageId) continue
+    const drafts = grouped.get(item.messageId) ?? []
+    drafts.push(item)
+    grouped.set(item.messageId, drafts)
+  }
+  return grouped
+})
+const unboundDrafts = computed(() => chat.drafts.value.filter((item) => !item.messageId))
 const statusLabel = computed(() => ({
   starting: 'Runtime 启动中',
   ready: '就绪',
@@ -67,10 +90,52 @@ async function selectConversation(id: string) {
 }
 
 async function sendMessage() {
-  if (!await chat.sendMessage(draft.value)) return
+  const content = draft.value
   draft.value = ''
+  await chat.sendMessage(content)
   scrollToLatest()
   focusInput()
+}
+
+function formatMessageTime(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  const now = new Date()
+  const sameDay = date.getFullYear() === now.getFullYear()
+    && date.getMonth() === now.getMonth()
+    && date.getDate() === now.getDate()
+  const time = date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false
+  })
+  if (sameDay) return time
+  const day = date.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' }).replace('/', '-')
+  return `${day} ${time}`
+}
+
+async function handleLaunchRequest(request: AssistantLaunchRequest | null | undefined) {
+  if (!request || request.sequence === handledLaunchSequence) return
+  handledLaunchSequence = request.sequence
+  chat.newConversation()
+  await chat.sendInput(request.input)
+  scrollToLatest()
+  focusInput()
+}
+
+async function applyTrafficSearch(
+  draftId: string,
+  filter: { query: string; domain: string; method: string | null; statusGroup: number | null }
+) {
+  if (await chat.applyTrafficSearchDraft(draftId)) {
+    emit('applyTrafficFilter', filter)
+  }
+}
+
+async function prepareMockRule(draftId: string, rule: MockRule) {
+  if (await chat.prepareMockDraft(draftId)) {
+    emit('prepareMockRule', rule)
+  }
 }
 
 function handleMessageKeydown(event: KeyboardEvent) {
@@ -126,8 +191,13 @@ onMounted(async () => {
     const firstConversation = chat.conversations.value[0]
     if (firstConversation) await chat.selectConversation(firstConversation.id)
   }
+  await handleLaunchRequest(launchRequest)
   focusInput()
   scrollToLatest()
+})
+
+watch(() => launchRequest?.sequence, () => {
+  void handleLaunchRequest(launchRequest)
 })
 </script>
 
@@ -254,21 +324,70 @@ onMounted(async () => {
         >
           <div v-if="!chat.activeConversation.value" class="conversation-empty">
             <img class="empty-state-icon" src="/src-tauri/icons/icon.png" alt="" />
-            <strong>你好，我是小橘</strong>
+            <strong>你好，我是智奈</strong>
             <span>请描述你遇到的问题</span>
           </div>
           <div v-else-if="chat.activeConversation.value.messages.length === 0" class="conversation-empty">
             <img class="empty-state-icon" src="/src-tauri/icons/icon.png" alt="" />
-            <strong>你好，我是小橘</strong>
+            <strong>你好，我是智奈</strong>
             <span>请描述你遇到的问题</span>
           </div>
+          <template v-for="message in chat.activeConversation.value?.messages ?? []" :key="message.id">
+            <article
+              class="message-bubble"
+              :class="`message-${message.role}`"
+              :data-message-type="message.messageType ?? 'normal'"
+            >
+              <img
+                v-if="message.role === 'assistant'"
+                class="message-avatar"
+                src="/src-tauri/icons/icon.png"
+                alt="智奈"
+              />
+              <div class="message-content">
+                <AssistantMarkdown v-if="message.role === 'assistant'" :content="message.content" />
+                <span v-else>{{ message.content }}</span>
+                <time :datetime="message.createdAt">{{ formatMessageTime(message.createdAt) }}</time>
+              </div>
+            </article>
+            <AssistantNetworkDraft
+              v-for="networkDraft in draftsByMessage.get(message.id)?.filter((item) => item.kind === 'networkRequest') ?? []"
+              :key="networkDraft.id"
+              :draft="networkDraft"
+              :pending="chat.submitting.value"
+              @execute="chat.executeNetworkDraft"
+            />
+            <AssistantTrafficSearchDraft
+              v-for="searchDraft in draftsByMessage.get(message.id)?.filter((item) => item.kind === 'trafficSearch') ?? []"
+              :key="searchDraft.id"
+              :draft="searchDraft"
+              :pending="chat.submitting.value"
+              @apply="applyTrafficSearch"
+            />
+            <AssistantMockDraft
+              v-for="mockDraft in draftsByMessage.get(message.id)?.filter((item) => item.kind === 'mock') ?? []"
+              :key="mockDraft.id"
+              :draft="mockDraft"
+              :pending="chat.submitting.value"
+              @prepare="prepareMockRule(mockDraft.id, $event)"
+            />
+            <AssistantScriptDraft
+              v-for="scriptDraft in draftsByMessage.get(message.id)?.filter((item) => item.kind === 'script') ?? []"
+              :key="scriptDraft.id"
+              :draft="scriptDraft"
+              :pending="chat.submitting.value"
+              @save="chat.acceptScriptDraft(scriptDraft.id, $event)"
+            />
+          </template>
           <article
-            v-for="message in chat.activeConversation.value?.messages ?? []"
-            :key="message.id"
-            class="message-bubble"
-            :class="`message-${message.role}`"
+            v-if="chat.notice.value"
+            class="message-bubble message-system"
+            data-message-type="error"
+            role="alert"
           >
-            {{ message.content }}
+            <div class="message-content">
+              <span>{{ chat.notice.value }}</span>
+            </div>
           </article>
           <div v-if="chat.activities.value.length > 0" class="activity-list" aria-label="分析活动">
             <div v-for="activity in chat.activities.value" :key="activity.id" class="activity-row">
@@ -277,33 +396,33 @@ onMounted(async () => {
             </div>
           </div>
           <AssistantNetworkDraft
-            v-for="networkDraft in chat.drafts.value.filter((item) => item.kind === 'networkRequest')"
+            v-for="networkDraft in unboundDrafts.filter((item) => item.kind === 'networkRequest')"
             :key="networkDraft.id"
             :draft="networkDraft"
             :pending="chat.submitting.value"
             @execute="chat.executeNetworkDraft"
           />
+          <AssistantTrafficSearchDraft
+            v-for="searchDraft in unboundDrafts.filter((item) => item.kind === 'trafficSearch')"
+            :key="searchDraft.id"
+            :draft="searchDraft"
+            :pending="chat.submitting.value"
+            @apply="applyTrafficSearch"
+          />
           <AssistantMockDraft
-            v-for="mockDraft in chat.drafts.value.filter((item) => item.kind === 'mock')"
+            v-for="mockDraft in unboundDrafts.filter((item) => item.kind === 'mock')"
             :key="mockDraft.id"
             :draft="mockDraft"
             :pending="chat.submitting.value"
-            @save="chat.acceptMockDraft(mockDraft.id, $event)"
+            @prepare="prepareMockRule(mockDraft.id, $event)"
           />
           <AssistantScriptDraft
-            v-for="scriptDraft in chat.drafts.value.filter((item) => item.kind === 'script')"
+            v-for="scriptDraft in unboundDrafts.filter((item) => item.kind === 'script')"
             :key="scriptDraft.id"
             :draft="scriptDraft"
             :pending="chat.submitting.value"
             @save="chat.acceptScriptDraft(scriptDraft.id, $event)"
           />
-        </div>
-
-        <div v-if="chat.notice.value" class="storage-notice" role="alert">
-          <span>{{ chat.notice.value }}</span>
-          <button type="button" aria-label="关闭历史提示" title="关闭提示" @click="chat.dismissNotice">
-            <X :size="12" />
-          </button>
         </div>
 
         <form class="message-composer" @submit.prevent="sendMessage">
@@ -677,6 +796,7 @@ onMounted(async () => {
 }
 
 .message-bubble {
+  display: flex;
   max-width: 88%;
   margin: 0 0 8px auto;
   padding: 8px 10px;
@@ -690,11 +810,49 @@ onMounted(async () => {
   white-space: pre-wrap;
 }
 
+.message-content {
+  min-width: 0;
+}
+
+.message-content time {
+  display: block;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: var(--font-size-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.message-avatar {
+  width: 24px;
+  height: 24px;
+  margin-right: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
 .message-assistant {
+  padding: 0;
+  align-items: flex-start;
+  border: 0;
+  background: transparent;
   margin-right: auto;
   margin-left: 0;
+}
+
+.message-assistant .message-content {
+  padding: 8px 10px;
   border: 1px solid var(--border);
+  border-radius: var(--radius-control);
   background: var(--surface-raised);
+}
+
+.message-system[data-message-type='error'] {
+  margin-right: auto;
+  margin-left: 0;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 
 .activity-list {
@@ -730,41 +888,6 @@ onMounted(async () => {
 
 .activity-dot[data-status='failed'] {
   background: var(--danger);
-}
-
-.storage-notice {
-  display: flex;
-  min-width: 0;
-  padding: 7px 8px 7px 10px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  background: var(--warning-soft);
-  color: var(--text-secondary);
-  font-size: var(--font-size-xs);
-}
-
-.storage-notice span {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.storage-notice button {
-  display: grid;
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-muted);
-}
-
-.storage-notice button:hover {
-  background: var(--surface);
-  color: var(--text);
 }
 
 .message-composer {

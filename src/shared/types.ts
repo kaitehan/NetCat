@@ -257,9 +257,11 @@ export interface AssistantConversation {
 
 export interface AssistantMessage {
   id: string
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'system'
   content: string
   createdAt: string
+  messageType?: 'normal' | 'error'
+  modelVisible?: boolean
 }
 
 export interface AssistantActivity {
@@ -272,9 +274,11 @@ export interface AssistantActivity {
 
 export interface AssistantDraft {
   id: string
-  kind: 'mock' | 'script' | 'networkRequest'
+  kind: 'mock' | 'script' | 'networkRequest' | 'trafficSearch'
   payload: Readonly<Record<string, unknown>>
-  status: 'pending' | 'accepted' | 'rejected'
+  status: 'pending' | 'accepted' | 'rejected' | 'superseded'
+  messageId?: string
+  createdAt?: string
 }
 
 export interface AssistantSnapshot {
@@ -287,7 +291,7 @@ export interface AssistantSnapshot {
 
 export type AssistantInput =
   | { kind: 'message'; message: string }
-  | { kind: 'curl'; curl: string }
+  | { kind: 'curl'; curl: string; sourceExchangeId?: string }
   | { kind: 'exchange'; exchangeId: string }
 
 export type AssistantProvider = 'deepSeek' | 'openAi'
@@ -317,6 +321,7 @@ export interface TrafficFilter {
   method: string
   status: string
   host: string
+  domain: string
 }
 
 export interface PairedDevice {
